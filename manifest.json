@@ -1,0 +1,10 @@
+{
+    "display_name": "텍스트 클리너",
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "author": "SillyGgu",
+    "version": "1.0.0",
+    "homePage": "",
+    "auto_update": false
+}
