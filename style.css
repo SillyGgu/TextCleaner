@@ -371,45 +371,67 @@
 
 @media screen and (max-width: 768px) {
     #tc-popup-window {
-        width: 95% !important;
-        height: 95% !important;
-        left: 2.5% !important;
-        top: 2.5% !important;
         border-radius: 15px;
+        box-shadow: 0 5px 25px rgba(0,0,0,0.5);
     }
 
     .tc-popup-body {
         padding: 12px;
-        gap: 10px;
+        gap: 15px;
+        overflow-y: auto !important; 
+        -webkit-overflow-scrolling: touch;
+        display: block !important; 
     }
 
     
+    .tc-input-group, .tc-action-buttons, .tc-history-tags {
+        margin-bottom: 10px;
+    }
+
     .tc-input-row {
         flex-wrap: wrap; 
         gap: 5px;
     }
     .tc-input-row input {
-        flex: 1 1 40% !important; 
+        flex: 1 1 40% !important;
         min-width: 80px;
     }
-    .tc-row-remove {
-        padding: 5px;
-    }
 
+    
     .tc-diff-container {
-        flex-direction: column !important; 
+        flex-direction: column !important;
+        height: auto !important; 
+        min-height: auto !important;
+        gap: 20px;
     }
 
     .tc-diff-box {
-        min-height: 180px;
+        flex: none !important;
+        width: 100% !important;
+        height: auto !important;
+    }
+
+    .tc-text-area, .tc-preview-area {
+        height: 180px !important;
+        resize: vertical !important; 
+        overflow-y: auto !important;
+        min-height: 100px;
+        border: 2px solid var(--tc-border) !important; 
+        box-sizing: border-box;
+    }
+
+    .tc-text-area::-webkit-resizer, .tc-preview-area::-webkit-resizer {
+        background-color: var(--tc-accent);
+        border: 2px solid var(--tc-bg-main);
+    }
+
+    .tc-preview-area {
+        height: 180px !important;
+        min-height: 100px;
     }
 
     .tc-popup-header-title {
         font-size: 0.9rem;
-    }
-
-    .tc-theme-selector {
-        gap: 5px;
     }
 
     .tc-action-buttons {
@@ -419,5 +441,22 @@
     .tc-btn-process, .tc-btn-compare {
         width: 100%;
         padding: 12px;
+    }
+
+    .tc-popup-footer {
+        padding: 10px 15px;
+        flex-shrink: 0;
+    }
+    .tc-tag-remove {
+        opacity: 0.8 !important;
+        background: rgba(0, 0, 0, 0.1); 
+        width: 16px;
+        height: 16px;
+    }
+    
+    #tc-popup-window.theme-lavender .tc-tag-remove,
+    #tc-popup-window.theme-pink .tc-tag-remove,
+    #tc-popup-window.theme-beige .tc-tag-remove {
+        background: rgba(0, 0, 0, 0.05);
     }
 }

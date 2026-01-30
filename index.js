@@ -259,12 +259,15 @@ function toggleCompareMode() {
         $origPreview.html(diff.oldHtml);
         $modPreview.html(diff.newHtml);
         
-        $origPreview.on('scroll', syncScroll);
-        $modPreview.on('scroll', syncScroll);
+        if (!isMobile()) {
+            $origPreview.on('scroll', syncScroll);
+            $modPreview.on('scroll', syncScroll);
+        }
 
-        toastr.info("대조 모드를 시작합니다");
+        toastr.info("대조 모드가 시작됩니다");
     } else {
         $btn.removeClass('active').text('⚖️ 원본과 대조하기');
+        
         $origView.show(); $modView.show();
         $origPreview.hide(); $modPreview.hide();
         
@@ -496,12 +499,29 @@ async function openCleanerPopup(mesId) {
 
     const $popup = $('#tc-popup-window');
     
+    
     if (isMobile()) {
-        $popup.addClass('tc-mobile-modal');
-        $popup.css({ display: 'flex', left: '5%', top: '5%', width: '90%', height: '90%' });
+        const $chat = $('#chat');
+        if ($chat.length > 0) {
+            const rect = $chat[0].getBoundingClientRect();
+            const targetWidth = rect.width * 0.95;
+            const targetHeight = rect.height * 0.85; 
+            const targetLeft = rect.left + (rect.width - targetWidth) / 2;
+            const targetTop = rect.top + (rect.height * 0.05); 
+
+            $popup.css({
+                display: 'flex',
+                left: targetLeft + 'px',
+                top: targetTop + 'px',
+                width: targetWidth + 'px',
+                height: targetHeight + 'px',
+                transform: 'none',
+                margin: '0',
+                'padding-bottom': 'env(safe-area-inset-bottom)' 
+            });
+        }
         $('#tc-resize-handle').hide();
     } else {
-        $popup.removeClass('tc-mobile-modal');
         $popup.css({ display: 'flex', width: '850px', height: '750px' });
         const nl = (window.innerWidth - $popup.outerWidth()) / 2;
         const nt = (window.innerHeight - $popup.outerHeight()) / 2;
