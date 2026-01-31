@@ -339,13 +339,29 @@
     color: white !important;
     border-color: #e67e22 !important;
 }
+.tc-diff-container { 
+    display: flex; 
+    gap: 16px; 
+    flex: 1; 
+    min-height: 250px; 
+}
 
-/* Diff Area */
-.tc-diff-container { display: flex; gap: 16px; flex: 1; min-height: 250px; }
-.tc-diff-box { flex: 1; display: flex; flex-direction: column; gap: 8px; position: relative; min-width: 0; }
-.tc-diff-box span { font-weight: 600; color: var(--tc-text-sub); font-size: 0.85rem; padding-left: 2px; }
+.tc-diff-box { 
+    flex: 1; 
+    display: flex; 
+    flex-direction: column; 
+    gap: 8px; 
+    position: relative; 
+    min-width: 0; 
+}
+.tc-diff-box span { 
+    font-weight: 600; 
+    color: var(--tc-text-sub); 
+    font-size: 0.85rem; 
+    padding-left: 2px; 
+}
 
-/* 리사이징 기능 복구 */
+
 .tc-text-area, .tc-preview-area {
     width: 100%;
     height: 100%;
@@ -363,16 +379,27 @@
     overflow-y: auto;
     word-break: break-all;
 }
+
 .tc-diff-added {
-    background-color: rgba(40, 167, 69, 0.3);
+    background-color: rgba(40, 167, 69, 0.3) !important;
     border-bottom: 2px solid #28a745;
     display: inline;
+    font-weight: bold;
+    color: inherit;
 }
+
 .tc-diff-removed {
-    background-color: rgba(255, 95, 86, 0.3);
-    border-bottom: 2px solid #ff5f56;
-    color: #ffbcbc;
-    text-decoration: line-through;
+    background-color: rgba(220, 53, 69, 0.3) !important;
+    border-bottom: 2px solid #dc3545;
+    color: #ff8888 !important;
+    text-decoration: line-through !important;
+    display: inline;
+}
+
+.tc-diff-phantom {
+    visibility: hidden !important;
+    pointer-events: none !important;
+    user-select: none !important;
     display: inline;
 }
 

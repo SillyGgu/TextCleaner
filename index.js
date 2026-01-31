@@ -73,41 +73,75 @@ function escapeHtml(text) {
  * 단순 텍스트 대조(Diff) 로직 (단어 단위)
  */
 function getDiffHtml(oldText, newText) {
-    const oldWords = oldText.split(/(\s+)/);
-    const newWords = newText.split(/(\s+)/);
+    const oldChars = Array.from(oldText);
+    const newChars = Array.from(newText);
+    const n = oldChars.length;
+    const m = newChars.length;
 
-    const dp = Array(oldWords.length + 1).fill(null).map(() => Array(newWords.length + 1).fill(0));
-
-    for (let i = 1; i <= oldWords.length; i++) {
-        for (let j = 1; j <= newWords.length; j++) {
-            if (oldWords[i - 1] === newWords[j - 1]) {
-                dp[i][j] = dp[i - 1][j - 1] + 1;
-            } else {
-                dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
-            }
+    // 1. LCS 알고리즘 (글자 단위)
+    const dp = Array(n + 1).fill(null).map(() => Array(m + 1).fill(0));
+    for (let i = 1; i <= n; i++) {
+        for (let j = 1; j <= m; j++) {
+            if (oldChars[i - 1] === newChars[j - 1]) dp[i][j] = dp[i - 1][j - 1] + 1;
+            else dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
         }
     }
 
-    let oldHtml = "";
-    let newHtml = "";
-    let i = oldWords.length;
-    let j = newWords.length;
-
-    const diffs = [];
+    let i = n, j = m, diffs = [];
     while (i > 0 || j > 0) {
-        if (i > 0 && j > 0 && oldWords[i - 1] === newWords[j - 1]) {
-            diffs.unshift({ type: 'common', val: oldWords[i - 1] });
+        if (i > 0 && j > 0 && oldChars[i - 1] === newChars[j - 1]) {
+            diffs.unshift({ type: 'common', val: oldChars[i - 1] });
             i--; j--;
         } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-            diffs.unshift({ type: 'added', val: newWords[j - 1] });
+            diffs.unshift({ type: 'added', val: newChars[j - 1] });
             j--;
         } else {
-            diffs.unshift({ type: 'removed', val: oldWords[i - 1] });
+            diffs.unshift({ type: 'removed', val: oldChars[i - 1] });
             i--;
         }
     }
 
+    // 2. 1차 인접 동일 타입 병합
+    let merged = [];
     diffs.forEach(item => {
+        if (merged.length > 0 && merged[merged.length - 1].type === item.type) {
+            merged[merged.length - 1].val += item.val;
+        } else {
+            merged.push(item);
+        }
+    });
+
+    // 3. Semantic Cleanup (중요: 파편 방지 로직 개선)
+    // 매우 짧은 공통 부분(4자 미만)이 변경사항 사이에 있거나 인접해 있으면 변경사항으로 흡수시킵니다.
+    for (let iter = 0; iter < 3; iter++) { 
+        let cleaned = [];
+        for (let k = 0; k < merged.length; k++) {
+            let item = merged[k];
+            if (item.type === 'common' && item.val.length < 4) {
+                let prev = cleaned[cleaned.length - 1];
+                let next = merged[k + 1];
+
+                // 앞이나 뒤에 변경사항이 있다면 해당 공통 파편을 변경사항에 병합
+                if (prev && (prev.type === 'added' || prev.type === 'removed')) {
+                    prev.val += item.val;
+                    continue;
+                } else if (next && (next.type === 'added' || next.type === 'removed')) {
+                    next.val = item.val + next.val;
+                    continue;
+                }
+            }
+            
+            if (cleaned.length > 0 && cleaned[cleaned.length - 1].type === item.type) {
+                cleaned[cleaned.length - 1].val += item.val;
+            } else {
+                cleaned.push(item);
+            }
+        }
+        merged = cleaned;
+    }
+
+    let oldHtml = "", newHtml = "";
+    merged.forEach(item => {
         const escaped = escapeHtml(item.val);
         if (item.type === 'common') {
             oldHtml += escaped;
@@ -121,7 +155,10 @@ function getDiffHtml(oldText, newText) {
         }
     });
 
-    return { oldHtml, newHtml };
+    return { 
+        oldHtml: oldHtml.replace(/\n/g, '<br>'), 
+        newHtml: newHtml.replace(/\n/g, '<br>') 
+    };
 }
 
 /**
