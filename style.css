@@ -89,7 +89,7 @@
     min-height: 550px;
     overflow: hidden;
     box-sizing: border-box;
-    font-family: "Pretendard", "Segoe UI", sans-serif !important;
+    font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", "Noto Sans CJK SC", "Noto Sans CJK TC", "Microsoft YaHei", "微软雅黑", STHeiti, sans-serif !important;
     transition: background-color 0.3s, color 0.3s;
 }
 
@@ -365,7 +365,7 @@
 .tc-text-area, .tc-preview-area {
     width: 100%;
     height: 100%;
-    font-family: "Pretendard", monospace !important;
+    font-family: "Pretendard Variable", Pretendard, "Segoe UI", "Noto Sans CJK SC", "Microsoft YaHei", monospace !important;
     box-sizing: border-box;
     border-radius: 8px;
     line-height: 1.6;
@@ -516,20 +516,19 @@
     }
 
     .tc-text-area {
-        height: auto !important; 
-        min-height: 200px !important; 
-        resize: vertical !important; 
+        height: 180px !important; 
+        min-height: 180px !important; 
+        resize: none !important; 
         overflow-y: auto !important;
-        flex: 1 1 auto; 
+        flex: none !important; 
     }
 
     .tc-preview-area {
-        height: auto !important;
-        min-height: 100px !important;
+        height: 180px !important; 
+        min-height: 180px !important;
         overflow-y: auto !important;
-        flex: 1 1 auto;
+        flex: none !important;
     }
-
     .tc-btn-process, .tc-btn-compare {
         width: 100%;
         padding: 8px 4px !important; 

@@ -668,7 +668,6 @@ $(document).ready(() => {
 
     const style = document.createElement('style');
     style.innerHTML = `
-        /* 팝업 내부의 모든 텍스트 요소에 폰트 스택 적용 */
         #tc-popup-window, 
         #tc-popup-window input, 
         #tc-popup-window textarea, 
