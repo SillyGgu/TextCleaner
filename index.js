@@ -666,6 +666,24 @@ $(document).ready(() => {
     link.rel = 'stylesheet'; link.href = `${extensionFolderPath}/style.css`;
     document.head.appendChild(link);
 
+    const style = document.createElement('style');
+    style.innerHTML = `
+        /* 팝업 내부의 모든 텍스트 요소에 폰트 스택 적용 */
+        #tc-popup-window, 
+        #tc-popup-window input, 
+        #tc-popup-window textarea, 
+        #tc-popup-window .tc-preview-area,
+        #tc-popup-window .tc-tab,
+        #tc-popup-window .tc-btn-process {
+            font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, 
+                         "Segoe UI", Roboto, "Helvetica Neue", Arial, "Apple SD Gothic Neo", 
+                         "Noto Sans KR", "Malgun Gothic", 
+                         "Noto Sans CJK SC", "Noto Sans CJK TC", "Microsoft YaHei", "微软雅黑", 
+                         STHeiti, "sans-serif" !important;
+        }
+    `;
+    document.head.appendChild(style);
+
     $("#chat .mes").each(function () { addCleanerButton($(this)); });
     const chatObserver = new MutationObserver((mutations) => {
         mutations.forEach((mutation) => {
