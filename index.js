@@ -7,9 +7,25 @@ const extensionFolderPath = `/scripts/extensions/third-party/${extensionName}`;
 let currentMesId = null;
 let lastProcessedContent = "";
 let isCompareMode = false;
+let currentEditMode = "original";
 
 const STORAGE_KEY = "tc_recent_editions";
 const THEME_KEY = "tc_current_theme";
+const DIMENSIONS_KEY = "tc_popup_dimensions";
+
+/**
+ * 팝업의 현재 위치와 크기를 저장 (PC 전용)
+ */
+function saveDimensions($popup) {
+    if (isMobile()) return;
+    const dimensions = {
+        top: $popup.css('top'),
+        left: $popup.css('left'),
+        width: $popup.css('width'),
+        height: $popup.css('height')
+    };
+    localStorage.setItem(DIMENSIONS_KEY, JSON.stringify(dimensions));
+}
 
 /**
  * 모바일 여부 확인
@@ -129,7 +145,7 @@ function saveToHistory(type, data) {
  */
 function applyTheme(themeName) {
     const $popup = $('#tc-popup-window');
-    $popup.removeClass('theme-lavender theme-pink theme-beige');
+    $popup.removeClass('theme-lavender theme-pink theme-beige theme-blue');
     if (themeName !== 'dark') {
         $popup.addClass(`theme-${themeName}`);
     }
@@ -137,7 +153,6 @@ function applyTheme(themeName) {
     $(`.tc-theme-dot[data-theme="${themeName}"]`).addClass('active');
     localStorage.setItem(THEME_KEY, themeName);
 }
-
 /**
  * 태그 UI 렌더링
  */
@@ -292,9 +307,14 @@ function ensurePopupExists() {
                     <div class="tc-theme-dot" data-theme="lavender" style="background:#d5c9dd;" title="Lavender"></div>
                     <div class="tc-theme-dot" data-theme="pink" style="background:#ffb7c5;" title="Pink"></div>
                     <div class="tc-theme-dot" data-theme="beige" style="background:#9ba59c;" title="Beige Green"></div>
+                    <div class="tc-theme-dot" data-theme="blue" style="background:#668589;" title="Antique Blue"></div>
                 </div>
                 <i class="fa-solid fa-xmark tc-popup-close-btn" id="tc-close-x"></i>
             </div>
+        </div>
+        <div class="tc-mode-tabs">
+            <div class="tc-tab active" data-mode="original">원본 메시지 수정</div>
+            <div class="tc-tab" data-mode="translation" id="tc-tab-translation" style="display:none;">번역문 수정</div>
         </div>
         <div class="tc-popup-body">
             <div class="tc-input-group">
@@ -353,6 +373,30 @@ function ensurePopupExists() {
     $('#tc-add-replace-btn').on('click', () => addReplaceRow());
     $('#tc-close-x, #tc-cancel-btn').on('click', () => $('#tc-popup-window').hide());
     $('#tc-compare-toggle-btn').on('click', toggleCompareMode);
+	$('.tc-tab').on('click', function() {
+        const mode = $(this).attr('data-mode');
+        if (mode === currentEditMode) return;
+
+        const context = getContext();
+        const message = context.chat[currentMesId];
+        
+        currentEditMode = mode;
+        $('.tc-tab').removeClass('active');
+        $(this).addClass('active');
+
+        let content = (mode === 'translation') ? message.extra.display_text : message.mes;
+        
+        $('#tc-original-view').val(content);
+        $('#tc-modified-view').val(content);
+        
+        if (isCompareMode) {
+            const diff = getDiffHtml(content, content);
+            $('#tc-original-preview').html(diff.oldHtml);
+            $('#tc-modified-preview').html(diff.newHtml);
+        }
+        
+        toastr.info(`${mode === 'translation' ? '번역문' : '원본'} 수정 모드로 전환되었습니다.`);
+    });
 
     $('#tc-process-btn').on('click', () => {
         const ranges = [];
@@ -402,15 +446,23 @@ function ensurePopupExists() {
 
         const finalContent = $('#tc-modified-view').val();
         const context = getContext();
-        context.chat[currentMesId].mes = finalContent;
+        const message = context.chat[currentMesId];
+
+        if (currentEditMode === 'translation') {
+            if (!message.extra) message.extra = {};
+            message.extra.display_text = finalContent;
+            toastr.success("번역문이 수정되었습니다.");
+        } else {
+            message.mes = finalContent;
+            toastr.success("원본 메시지가 수정되었습니다.");
+        }
         
-        updateMessageBlock(currentMesId, context.chat[currentMesId]);
+        updateMessageBlock(currentMesId, message);
         await saveChat();
         
         await eventSource.emit(event_types.MESSAGE_UPDATED, currentMesId);
         await eventSource.emit(event_types.MESSAGE_RENDERED, currentMesId);
 
-        toastr.success("메시지가 성공적으로 수정되었습니다.");
         $('#tc-popup-window').hide();
     });
 }
@@ -442,9 +494,14 @@ function setupDraggable($popup, $header) {
         $popup.css({ left: nl + 'px', top: nt + 'px' });
     });
 
-    $(window).on('mouseup', () => { isDragging = false; $header.css('cursor', 'move'); });
+    $(window).on('mouseup', () => { 
+        if (isDragging) {
+            isDragging = false; 
+            $header.css('cursor', 'move'); 
+            saveDimensions($popup);
+        }
+    });
 }
-
 /**
  * 리사이징 로직 (PC 전용)
  */
@@ -470,15 +527,31 @@ function setupResizable($popup, $handle) {
         if (nh > 500) $popup.css('height', nh + 'px');
     });
 
-    $(window).on('mouseup', () => { isResizing = false; });
+    $(window).on('mouseup', () => { 
+        if (isResizing) {
+            isResizing = false; 
+            saveDimensions($popup);
+        }
+    });
 }
-
 async function openCleanerPopup(mesId) {
     ensurePopupExists();
     currentMesId = mesId;
     isCompareMode = false; 
+    currentEditMode = "original"; 
     
-    const content = getContext().chat[mesId].mes;
+    const context = getContext();
+    const message = context.chat[mesId];
+    const content = message.mes;
+    
+    $('.tc-tab').removeClass('active');
+    $('.tc-tab[data-mode="original"]').addClass('active');
+    
+    if (message.extra && message.extra.display_text) {
+        $('#tc-tab-translation').show();
+    } else {
+        $('#tc-tab-translation').hide();
+    }
     
     $('#tc-original-view').val(content).show();
     $('#tc-modified-view').val(content).show();
@@ -499,33 +572,41 @@ async function openCleanerPopup(mesId) {
 
     const $popup = $('#tc-popup-window');
     
-    
     if (isMobile()) {
         const $chat = $('#chat');
         if ($chat.length > 0) {
             const rect = $chat[0].getBoundingClientRect();
-            const targetWidth = rect.width * 0.95;
-            const targetHeight = rect.height * 0.85; 
-            const targetLeft = rect.left + (rect.width - targetWidth) / 2;
-            const targetTop = rect.top + (rect.height * 0.05); 
-
             $popup.css({
                 display: 'flex',
-                left: targetLeft + 'px',
-                top: targetTop + 'px',
-                width: targetWidth + 'px',
-                height: targetHeight + 'px',
-                transform: 'none',
+                top: rect.top + 'px',
+                height: rect.height + 'px',
+                left: '50%',
+                width: '98%',
+                transform: 'translateX(-50%)',
                 margin: '0',
-                'padding-bottom': 'env(safe-area-inset-bottom)' 
+                position: 'fixed',
+                'padding-bottom': 'env(safe-area-inset-bottom)'
             });
         }
         $('#tc-resize-handle').hide();
     } else {
-        $popup.css({ display: 'flex', width: '850px', height: '750px' });
-        const nl = (window.innerWidth - $popup.outerWidth()) / 2;
-        const nt = (window.innerHeight - $popup.outerHeight()) / 2;
-        $popup.css({ left: nl + 'px', top: nt + 'px' });
+        const savedDim = localStorage.getItem(DIMENSIONS_KEY);
+        if (savedDim) {
+            const dim = JSON.parse(savedDim);
+            $popup.css({
+                display: 'flex',
+                top: dim.top,
+                left: dim.left,
+                width: dim.width,
+                height: dim.height,
+                transform: 'none' 
+            });
+        } else {
+            $popup.css({ display: 'flex', width: '850px', height: '750px', transform: 'none' });
+            const nl = (window.innerWidth - $popup.outerWidth()) / 2;
+            const nt = (window.innerHeight - $popup.outerHeight()) / 2;
+            $popup.css({ left: nl + 'px', top: nt + 'px' });
+        }
         $('#tc-resize-handle').show();
     }
 }
