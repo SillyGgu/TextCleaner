@@ -4,10 +4,14 @@ import { updateMessageBlock, saveChat, eventSource, event_types } from '../../..
 const extensionName = "TextCleaner";
 const extensionFolderPath = `/scripts/extensions/third-party/${extensionName}`;
 
+const DB_NAME = 'LLMtranslatorDB';
+const STORE_NAME = 'translations';
+
 let currentMesId = null;
 let lastProcessedContent = "";
 let isCompareMode = false;
 let currentEditMode = "original";
+let loadedFileName = "preset.json";
 
 const STORAGE_KEY = "tc_recent_editions";
 const THEME_KEY = "tc_current_theme";
@@ -78,7 +82,6 @@ function getDiffHtml(oldText, newText) {
     const n = oldChars.length;
     const m = newChars.length;
 
-    // 1. LCS 알고리즘 (글자 단위)
     const dp = Array(n + 1).fill(null).map(() => Array(m + 1).fill(0));
     for (let i = 1; i <= n; i++) {
         for (let j = 1; j <= m; j++) {
@@ -101,7 +104,6 @@ function getDiffHtml(oldText, newText) {
         }
     }
 
-    // 2. 1차 인접 동일 타입 병합
     let merged = [];
     diffs.forEach(item => {
         if (merged.length > 0 && merged[merged.length - 1].type === item.type) {
@@ -111,8 +113,6 @@ function getDiffHtml(oldText, newText) {
         }
     });
 
-    // 3. Semantic Cleanup (중요: 파편 방지 로직 개선)
-    // 매우 짧은 공통 부분(4자 미만)이 변경사항 사이에 있거나 인접해 있으면 변경사항으로 흡수시킵니다.
     for (let iter = 0; iter < 3; iter++) { 
         let cleaned = [];
         for (let k = 0; k < merged.length; k++) {
@@ -121,7 +121,6 @@ function getDiffHtml(oldText, newText) {
                 let prev = cleaned[cleaned.length - 1];
                 let next = merged[k + 1];
 
-                // 앞이나 뒤에 변경사항이 있다면 해당 공통 파편을 변경사항에 병합
                 if (prev && (prev.type === 'added' || prev.type === 'removed')) {
                     prev.val += item.val;
                     continue;
@@ -327,7 +326,20 @@ function toggleCompareMode() {
         $modPreview.off('scroll');
     }
 }
-
+/**
+ * 텍스트 파일 다운로드 헬퍼 함수
+ */
+function downloadTextFile(content, filename) {
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+}
 /**
  * 팝업 생성
  */
@@ -351,43 +363,63 @@ function ensurePopupExists() {
         </div>
         <div class="tc-mode-tabs">
             <div class="tc-tab active" data-mode="original">원본 메시지 수정</div>
-            <div class="tc-tab" data-mode="translation" id="tc-tab-translation" style="display:none;">번역문 수정</div>
+            <!-- 기존 번역문 수정 탭 제거됨 -->
+            <div class="tc-tab" data-mode="llm_manual">LLM 번역 관리</div> <!-- [수정] 탭 이름 변경 -->
+            <div class="tc-tab" data-mode="prompts" id="tc-tab-prompts">프롬프트 수정</div>
         </div>
         <div class="tc-popup-body">
-            <div class="tc-input-group">
+            <!-- 일반 편집 모드 영역 (LLM 모드 공유) -->
+            <div id="tc-standard-edit-area">
+                <div class="tc-input-group">
+                    <div class="tc-section-header">
+                        <label>영역 삭제 (A ~ B)</label>
+                        <button class="tc-btn-add-row" id="tc-add-range-btn">+ 추가</button>
+                    </div>
+                    <div id="tc-range-container" class="tc-rows-container"></div>
+                </div>
+
+                <div class="tc-input-group">
+                    <div class="tc-section-header">
+                        <label>단어 치환</label>
+                        <button class="tc-btn-add-row" id="tc-add-replace-btn">+ 추가</button>
+                    </div>
+                    <div id="tc-replace-container" class="tc-rows-container"></div>
+                </div>
+
+                <div id="tc-history-area" class="tc-history-tags"></div>
+
+                <div class="tc-action-buttons">
+                    <button id="tc-process-btn" class="tc-btn-process">✨ 설정한 모든 내용으로 치환 실행</button>
+                    <button id="tc-compare-toggle-btn" class="tc-btn-compare">⚖️ 원본과 대조하기</button>
+                </div>
+
+                <div class="tc-diff-container">
+                    <div class="tc-diff-box">
+                        <span id="tc-left-label">원본 메시지</span>
+                        <textarea id="tc-original-view" class="tc-text-area" readonly></textarea>
+                        <div id="tc-original-preview" class="tc-preview-area" style="display:none;"></div>
+                    </div>
+                    <div class="tc-diff-box">
+                        <span id="tc-right-label">최종 결과 (자유 편집)</span>
+                        <textarea id="tc-modified-view" class="tc-text-area"></textarea>
+                        <div id="tc-modified-preview" class="tc-preview-area" style="display:none;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 프롬프트 편집 모드 영역 -->
+            <div id="tc-prompt-edit-area" style="display:none; flex-direction:column; gap:10px; flex:1; height: 100%;">
                 <div class="tc-section-header">
-                    <label>영역 삭제 (A ~ B)</label>
-                    <button class="tc-btn-add-row" id="tc-add-range-btn">+ 추가</button>
+                    <label>프롬프트 JSON 및 이름 일괄 수정</label>
+                    <div style="display:flex; gap:5px;">
+                        <button id="tc-import-json-btn" class="tc-btn-add-row" style="background:#4a90e2; color:white;">📂 JSON 불러오기</button>
+                        <button id="tc-export-names-btn" class="tc-btn-add-row">📤 이름 내보내기</button>
+                        <button id="tc-import-names-btn" class="tc-btn-add-row">📥 이름 가져오기</button>
+                        <input type="file" id="tc-json-file-input" style="display:none;" accept=".json">
+                        <input type="file" id="tc-names-file-input" style="display:none;" accept=".txt">
+                    </div>
                 </div>
-                <div id="tc-range-container" class="tc-rows-container"></div>
-            </div>
-
-            <div class="tc-input-group">
-                <div class="tc-section-header">
-                    <label>단어 치환</label>
-                    <button class="tc-btn-add-row" id="tc-add-replace-btn">+ 추가</button>
-                </div>
-                <div id="tc-replace-container" class="tc-rows-container"></div>
-            </div>
-
-            <div id="tc-history-area" class="tc-history-tags"></div>
-
-            <div class="tc-action-buttons">
-                <button id="tc-process-btn" class="tc-btn-process">✨ 설정한 모든 내용으로 치환 실행</button>
-                <button id="tc-compare-toggle-btn" class="tc-btn-compare">⚖️ 원본과 대조하기</button>
-            </div>
-
-            <div class="tc-diff-container">
-                <div class="tc-diff-box">
-                    <span>원본 메시지</span>
-                    <textarea id="tc-original-view" class="tc-text-area" readonly></textarea>
-                    <div id="tc-original-preview" class="tc-preview-area" style="display:none;"></div>
-                </div>
-                <div class="tc-diff-box">
-                    <span>최종 결과 (자유 편집)</span>
-                    <textarea id="tc-modified-view" class="tc-text-area"></textarea>
-                    <div id="tc-modified-preview" class="tc-preview-area" style="display:none;"></div>
-                </div>
+                <textarea id="tc-prompt-json-view" class="tc-text-area" style="flex:1; font-family:monospace; font-size:12px; height:100%; white-space: pre;" placeholder="[📂 JSON 불러오기] 버튼을 눌러 실리태번 프롬프트 파일을 선택하세요."></textarea>
             </div>
         </div>
         <div class="tc-popup-footer">
@@ -408,21 +440,64 @@ function ensurePopupExists() {
 
     $('#tc-add-range-btn').on('click', () => addRangeRow());
     $('#tc-add-replace-btn').on('click', () => addReplaceRow());
-    $('#tc-close-x, #tc-cancel-btn').on('click', () => $('#tc-popup-window').hide());
     $('#tc-compare-toggle-btn').on('click', toggleCompareMode);
-	$('.tc-tab').on('click', function() {
-        const mode = $(this).attr('data-mode');
-        if (mode === currentEditMode) return;
+    
+    $('#tc-close-x, #tc-cancel-btn').on('click', () => {
+        $('#tc-popup-window').hide();
+        $('#tc-prompt-json-view').val('');
+        loadedFileName = "preset.json";   
+    });
 
-        const context = getContext();
-        const message = context.chat[currentMesId];
-        
+    // 탭 클릭 이벤트
+    $('.tc-tab').on('click', async function() {
+        const mode = $(this).attr('data-mode');
         currentEditMode = mode;
+        
         $('.tc-tab').removeClass('active');
         $(this).addClass('active');
 
-        let content = (mode === 'translation') ? message.extra.display_text : message.mes;
-        
+        if (mode === 'prompts') {
+            $('#tc-standard-edit-area').hide();
+            $('#tc-prompt-edit-area').css('display', 'flex');
+            $('#tc-apply-btn').text('💾 JSON 다운로드');
+            return; 
+        }
+
+        $('#tc-standard-edit-area').show();
+        $('#tc-prompt-edit-area').hide();
+
+        const context = getContext();
+        const message = context.chat[currentMesId];
+        let content = "";
+
+        if (mode === 'llm_manual') {
+            $('#tc-apply-btn').text('💾 DB 업데이트');
+            $('#tc-left-label').text('기존 번역 데이터');
+            $('#tc-right-label').text('최종 번역문');
+            
+            $('#tc-original-view').val("DB 조회 중...");
+            $('#tc-modified-view').val("DB 조회 중...");
+
+            try {
+                const originalText = message.mes;
+                const dbTranslation = await getTranslationFromDB(originalText);
+                // DB에 없으면 현재 채팅창의 번역(display_text)을 가져옴
+                content = dbTranslation || message.extra?.display_text || "";
+            } catch (e) {
+                console.error(e);
+                content = "";
+            }
+            toastr.info(`LLM 번역 관리 모드로 전환되었습니다.`);
+
+        } else {
+            // 원본 메시지 수정 모드
+            $('#tc-apply-btn').text('메시지에 적용');
+            $('#tc-left-label').text('원본 메시지');
+            $('#tc-right-label').text('최종 결과 (자유 편집)');
+            content = message.mes;
+            toastr.info(`원본 수정 모드로 전환되었습니다.`);
+        }
+
         $('#tc-original-view').val(content);
         $('#tc-modified-view').val(content);
         
@@ -431,45 +506,31 @@ function ensurePopupExists() {
             $('#tc-original-preview').html(diff.oldHtml);
             $('#tc-modified-preview').html(diff.newHtml);
         }
-        
-        toastr.info(`${mode === 'translation' ? '번역문' : '원본'} 수정 모드로 전환되었습니다.`);
     });
 
-    $('#tc-process-btn').on('click', () => {
-        const ranges = [];
-        $('.tc-range-row').each(function() {
-            const start = $(this).find('.tc-start-tag').val();
-            const end = $(this).find('.tc-end-tag').val();
-            if (start || end) ranges.push({ start, end });
-        });
+    // 적용 버튼 이벤트
+    $('#tc-apply-btn').on('click', async () => {
+        const activeMode = $('.tc-mode-tabs .tc-tab.active').attr('data-mode');
 
-        const replacements = [];
-        $('.tc-replace-row').each(function() {
-            const find = $(this).find('.tc-find-word').val();
-            const replace = $(this).find('.tc-replace-word').val();
-            if (find) replacements.push({ find, replace });
-        });
-
-        const original = $('#tc-original-view').val();
-        const processed = processTextMulti(original, ranges, replacements);
-        
-        $('#tc-modified-view').val(processed.trim());
-        lastProcessedContent = processed.trim();
-        
-        if (isCompareMode) {
-            const $origView = $('#tc-original-view');
-            const $modView = $('#tc-modified-view');
-            const diff = getDiffHtml($origView.val(), $modView.val());
-            $('#tc-original-preview').html(diff.oldHtml);
-            $('#tc-modified-preview').html(diff.newHtml);
+        if (activeMode === 'prompts') {
+            const jsonStr = $('#tc-prompt-json-view').val();
+            if (!jsonStr) {
+                toastr.warning("저장할 내용이 없습니다.");
+                return;
+            }
+            try {
+                JSON.parse(jsonStr); 
+                downloadTextFile(jsonStr, loadedFileName); 
+                toastr.success(`'${loadedFileName}' 다운로드 완료.`);
+            } catch (e) {
+                toastr.error("JSON 형식이 올바르지 않아 다운로드할 수 없습니다.");
+            }
+            return; 
         }
 
-        toastr.info("치환 결과가 반영되었습니다.");
-    });
-
-    $('#tc-apply-btn').on('click', async () => {
         if (currentMesId === null) return;
 
+        // 히스토리 저장
         $('.tc-range-row').each(function() {
             const s = $(this).find('.tc-start-tag').val();
             const e = $(this).find('.tc-end-tag').val();
@@ -485,25 +546,129 @@ function ensurePopupExists() {
         const context = getContext();
         const message = context.chat[currentMesId];
 
-        if (currentEditMode === 'translation') {
-            if (!message.extra) message.extra = {};
-            message.extra.display_text = finalContent;
-            toastr.success("번역문이 수정되었습니다.");
-        } else {
+        // [수정] LLM 번역 관리 저장
+        if (activeMode === 'llm_manual') {
+            if (!finalContent.trim()) {
+                toastr.warning("저장할 번역 내용이 없습니다.");
+                return;
+            }
+            try {
+                const originalText = message.mes;
+                const existing = await getTranslationFromDB(originalText);
+                
+                if (existing) {
+                    await updateTranslationByOriginalText(originalText, finalContent);
+                    toastr.success("DB 데이터가 업데이트되었습니다.");
+                } else {
+                    await addTranslationToDB(originalText, finalContent);
+                    toastr.success("DB에 번역이 등록되었습니다.");
+                }
+
+                if (!message.extra) message.extra = {};
+                message.extra.display_text = finalContent;
+                
+            } catch (e) {
+                toastr.error("DB 저장 실패: " + e.message);
+                return;
+            }
+        } 
+        // 원본 메시지 저장
+        else {
             message.mes = finalContent;
             toastr.success("원본 메시지가 수정되었습니다.");
         }
         
         updateMessageBlock(currentMesId, message);
         await saveChat();
-        
         await eventSource.emit(event_types.MESSAGE_UPDATED, currentMesId);
         await eventSource.emit(event_types.MESSAGE_RENDERED, currentMesId);
 
         $('#tc-popup-window').hide();
+        $('#tc-prompt-json-view').val('');
+        loadedFileName = "preset.json";
+    });
+    
+    // (이하 프롬프트 및 치환 버튼 이벤트들 기존 유지)
+    $('#tc-import-json-btn').on('click', () => $('#tc-json-file-input').click());
+    $('#tc-json-file-input').on('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        loadedFileName = file.name; 
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            try {
+                const jsonContent = JSON.parse(e.target.result);
+                $('#tc-prompt-json-view').val(JSON.stringify(jsonContent, null, 4));
+                toastr.success(`'${loadedFileName}' 파일을 불러왔습니다.`);
+            } catch (err) {
+                toastr.error("JSON 파싱 실패: " + err.message);
+            }
+        };
+        reader.readAsText(file);
+        $(this).val(''); 
+    });
+    $('#tc-export-names-btn').on('click', () => {
+        try {
+            const jsonStr = $('#tc-prompt-json-view').val();
+            if (!jsonStr) return toastr.warning("JSON이 비어있습니다.");
+            const data = JSON.parse(jsonStr);
+            let promptsArray = Array.isArray(data) ? data : (data.prompts || []);
+            const names = promptsArray.map(p => p.name || "Unknown").join('\n');
+            downloadTextFile(names, 'prompt_names.txt');
+        } catch (e) { toastr.error("오류: " + e.message); }
+    });
+    $('#tc-import-names-btn').on('click', () => $('#tc-names-file-input').click());
+    $('#tc-names-file-input').on('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const newNames = e.target.result.split(/\r?\n/);
+            try {
+                const jsonStr = $('#tc-prompt-json-view').val();
+                let data = JSON.parse(jsonStr);
+                let promptsArray = Array.isArray(data) ? data : (data.prompts || null);
+                if (!promptsArray) return toastr.error("프롬프트 구조 아님");
+                promptsArray.forEach((p, i) => { if (i < newNames.length) p.name = newNames[i]; });
+                $('#tc-prompt-json-view').val(JSON.stringify(data, null, 4));
+                toastr.success("이름 업데이트 완료");
+            } catch (err) { toastr.error("오류: " + err.message); }
+        };
+        reader.readAsText(file);
+        $(this).val('');
+    });
+
+$('#tc-process-btn').on('click', () => {
+        const ranges = [];
+        $('.tc-range-row').each(function() {
+            const start = $(this).find('.tc-start-tag').val();
+            const end = $(this).find('.tc-end-tag').val();
+            if (start || end) ranges.push({ start, end });
+        });
+        const replacements = [];
+        $('.tc-replace-row').each(function() {
+            const find = $(this).find('.tc-find-word').val();
+            const replace = $(this).find('.tc-replace-word').val();
+            if (find) replacements.push({ find, replace });
+        });
+
+        // [수정됨] 누적 적용을 위해 source를 original-view가 아닌 modified-view(현재 결과물)로 변경
+        const currentContent = $('#tc-modified-view').val();
+        const processed = processTextMulti(currentContent, ranges, replacements);
+        
+        $('#tc-modified-view').val(processed.trim());
+        lastProcessedContent = processed.trim();
+        
+        if (isCompareMode) {
+            const $origView = $('#tc-original-view');
+            const $modView = $('#tc-modified-view');
+            const diff = getDiffHtml($origView.val(), $modView.val());
+            $('#tc-original-preview').html(diff.oldHtml);
+            $('#tc-modified-preview').html(diff.newHtml);
+        }
+        toastr.info("치환 결과가 반영되었습니다.");
     });
 }
-
 /**
  * 드래그 로직 (PC 전용)
  */
@@ -577,18 +742,25 @@ async function openCleanerPopup(mesId) {
     isCompareMode = false; 
     currentEditMode = "original"; 
     
+    $('#tc-prompt-json-view').val('');
+    loadedFileName = "preset.json";
+	
     const context = getContext();
     const message = context.chat[mesId];
     const content = message.mes;
     
+    
     $('.tc-tab').removeClass('active');
     $('.tc-tab[data-mode="original"]').addClass('active');
     
-    if (message.extra && message.extra.display_text) {
-        $('#tc-tab-translation').show();
-    } else {
-        $('#tc-tab-translation').hide();
-    }
+    
+    $('#tc-standard-edit-area').show();
+    $('#tc-prompt-edit-area').hide();
+    $('#tc-left-label').text('원본 메시지');
+    $('#tc-right-label').text('최종 결과 (자유 편집)');
+    $('#tc-apply-btn').text('메시지에 적용');
+
+
     
     $('#tc-original-view').val(content).show();
     $('#tc-modified-view').val(content).show();
@@ -608,6 +780,7 @@ async function openCleanerPopup(mesId) {
     applyTheme(savedTheme);
 
     const $popup = $('#tc-popup-window');
+    
     
     if (isMobile()) {
         const $chat = $('#chat');
@@ -639,7 +812,7 @@ async function openCleanerPopup(mesId) {
                 transform: 'none' 
             });
         } else {
-            $popup.css({ display: 'flex', width: '850px', height: '750px', transform: 'none' });
+            $popup.css({ display: 'flex', width: '850px', height: '800px', transform: 'none' });
             const nl = (window.innerWidth - $popup.outerWidth()) / 2;
             const nt = (window.innerHeight - $popup.outerHeight()) / 2;
             $popup.css({ left: nl + 'px', top: nt + 'px' });
@@ -693,3 +866,135 @@ $(document).ready(() => {
     });
     chatObserver.observe(document.getElementById('chat'), { childList: true, subtree: true });
 });
+
+function openDB() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, 1);
+
+        request.onerror = (event) => {
+            reject(new Error("IndexedDB open error"));
+        };
+
+        request.onsuccess = (event) => {
+            resolve(event.target.result);
+        };
+
+        request.onupgradeneeded = (event) => {
+            const db = event.target.result;
+            
+            if (!db.objectStoreNames.contains(STORE_NAME)) {
+                const objectStore = db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
+                objectStore.createIndex('originalText', 'originalText', { unique: false });
+                objectStore.createIndex('provider', 'provider', { unique: false });
+                objectStore.createIndex('model', 'model', { unique: false });
+                objectStore.createIndex('date', 'date', { unique: false });
+            }
+        };
+    });
+}
+
+async function getTranslationFromDB(originalText) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(STORE_NAME, 'readonly');
+        const store = transaction.objectStore(STORE_NAME);
+        const index = store.index('originalText');
+        const request = index.get(originalText);
+
+        request.onsuccess = (event) => {
+            const record = event.target.result;
+            resolve(record ? record.translation : null);
+        };
+        request.onerror = (e) => {
+            reject(new Error("DB get error"));
+        };
+        transaction.oncomplete = function () {
+            db.close();
+        };
+    });
+}
+
+async function addTranslationToDB(originalText, translation) {
+    const db = await openDB();
+    
+    
+    const provider = "TextCleaner"; 
+    const model = "Manual";
+
+    const utcDate = new Date();
+    const koreanDate = new Date(utcDate.getTime() + (9 * 60 * 60 * 1000));
+    const date = koreanDate.toISOString();
+
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(STORE_NAME, 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+
+        const request = store.add({
+            originalText: originalText,
+            translation: translation,
+            provider: provider,
+            model: model,
+            date: date
+        });
+
+        request.onsuccess = (event) => {
+            resolve("add success");
+        };
+        request.onerror = (event) => {
+            reject(new Error("add error"));
+        };
+        transaction.oncomplete = function () {
+            db.close();
+        };
+    });
+}
+
+async function updateTranslationByOriginalText(originalText, newTranslation) {
+    const db = await openDB();
+    const provider = "TextCleaner";
+    const model = "Manual";
+    
+    const utcDate = new Date();
+    const koreanDate = new Date(utcDate.getTime() + (9 * 60 * 60 * 1000));
+    const date = koreanDate.toISOString();
+
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(STORE_NAME, 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        const index = store.index('originalText');
+        const request = index.get(originalText);
+
+        request.onsuccess = async (event) => {
+            const record = event.target.result;
+            if (record) {
+                const updateRequest = store.put({ 
+                    ...record, 
+                    translation: newTranslation, 
+                    provider: provider, 
+                    model: model, 
+                    date: date 
+                });
+                updateRequest.onsuccess = () => {
+                    resolve();
+                };
+                updateRequest.onerror = (e) => {
+                    reject(new Error('put error'));
+                };
+            } else {
+                
+                try {
+                    await addTranslationToDB(originalText, newTranslation);
+                    resolve();
+                } catch(e) {
+                    reject(e);
+                }
+            }
+        };
+        request.onerror = (e) => {
+            reject(new Error('get error'));
+        };
+        transaction.oncomplete = function () {
+            db.close();
+        };
+    });
+}
