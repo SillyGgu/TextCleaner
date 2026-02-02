@@ -546,7 +546,7 @@ function ensurePopupExists() {
         const context = getContext();
         const message = context.chat[currentMesId];
 
-        // [수정] LLM 번역 관리 저장
+        // LLM 번역 관리 저장
         if (activeMode === 'llm_manual') {
             if (!finalContent.trim()) {
                 toastr.warning("저장할 번역 내용이 없습니다.");
