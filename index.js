@@ -8,14 +8,25 @@ const DB_NAME = 'LLMtranslatorDB';
 const STORE_NAME = 'translations';
 
 let currentMesId = null;
-let lastProcessedContent = "";
 let isCompareMode = false;
-let currentEditMode = "original";
 let loadedFileName = "preset.json";
 
+// 대조 모드 스크롤 동기화 핸들러 (리스너 누적 방지용 고정 참조)
+const syncScrollHandler = (e) => {
+    const $origPreview = $('#tc-original-preview');
+    const $modPreview = $('#tc-modified-preview');
+    if (e.target.id === 'tc-original-preview') {
+        $modPreview[0].scrollTop = e.target.scrollTop;
+    } else {
+        $origPreview[0].scrollTop = e.target.scrollTop;
+    }
+};
+
 const STORAGE_KEY = "tc_recent_editions";
+const STORAGE_KEY_LLM = "tc_recent_editions_llm";
 const THEME_KEY = "tc_current_theme";
 const DIMENSIONS_KEY = "tc_popup_dimensions";
+const PRESET_KEY = "tc_presets";
 
 /**
  * 팝업의 현재 위치와 크기를 저장 (PC 전용)
@@ -77,6 +88,12 @@ function escapeHtml(text) {
  * 단순 텍스트 대조(Diff) 로직 (단어 단위)
  */
 function getDiffHtml(oldText, newText) {
+    if (oldText.length > 3000 || newText.length > 3000) {
+        return {
+            oldHtml: escapeHtml(oldText).replace(/\n/g, '<br>'),
+            newHtml: escapeHtml(newText).replace(/\n/g, '<br>')
+        };
+    }
     const oldChars = Array.from(oldText);
     const newChars = Array.from(newText);
     const n = oldChars.length;
@@ -163,17 +180,108 @@ function getDiffHtml(oldText, newText) {
 /**
  * 히스토리 관리
  */
-function getHistory() {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+function getCurrentHistoryKey() {
+    const mode = $('.tc-mode-tabs .tc-tab.active').attr('data-mode');
+    return mode === 'llm_manual' ? STORAGE_KEY_LLM : STORAGE_KEY;
+}
+
+function getHistory(overrideKey) {
+    const storageKey = overrideKey || getCurrentHistoryKey();
+    return JSON.parse(localStorage.getItem(storageKey) || "[]");
 }
 
 function saveToHistory(type, data) {
-    let history = getHistory();
+    const storageKey = getCurrentHistoryKey();
+    let history = getHistory(storageKey);
     history = history.filter(item => JSON.stringify(item.data) !== JSON.stringify(data));
     history.unshift({ type, data });
     if (history.length > 10) history.pop();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+    localStorage.setItem(storageKey, JSON.stringify(history));
     renderHistoryTags();
+}
+
+/**
+ * 프리셋 관리
+ */
+function getPresets() {
+    return JSON.parse(localStorage.getItem(PRESET_KEY) || "[]");
+}
+
+function savePreset(name, ranges, replacements) {
+    const presets = getPresets();
+    const existing = presets.findIndex(p => p.name === name);
+    const preset = { name, ranges, replacements };
+    if (existing >= 0) {
+        presets[existing] = preset;
+    } else {
+        presets.push(preset);
+    }
+    localStorage.setItem(PRESET_KEY, JSON.stringify(presets));
+    renderPresetTags();
+}
+
+function deletePreset(name) {
+    const presets = getPresets().filter(p => p.name !== name);
+    localStorage.setItem(PRESET_KEY, JSON.stringify(presets));
+    renderPresetTags();
+}
+
+function renderPresetTags() {
+    const presets = getPresets();
+    const $container = $('#tc-preset-area');
+    $container.empty();
+
+    presets.forEach((preset) => {
+        const $chip = $('<div>').addClass('tc-preset-chip');
+        const $name = $('<span>').text(preset.name);
+        const $del = $('<span>').addClass('tc-preset-chip-del').text('✕');
+
+        $del.on('click', (e) => {
+            e.stopPropagation();
+            if (confirm(`프리셋 "${preset.name}"을 삭제할까요?`)) {
+                deletePreset(preset.name);
+            }
+        });
+
+        $chip.on('click', () => loadPreset(preset));
+        $chip.append($name).append($del);
+        $container.append($chip);
+    });
+}
+
+function loadPreset(preset) {
+    $('#tc-range-container').empty();
+    $('#tc-replace-container').empty();
+
+    if (preset.ranges && preset.ranges.length > 0) {
+        preset.ranges.forEach(r => addRangeRow(r.start, r.end));
+    } else {
+        addRangeRow();
+    }
+
+    if (preset.replacements && preset.replacements.length > 0) {
+        preset.replacements.forEach(r => addReplaceRow(r.find, r.replace));
+    } else {
+        addReplaceRow();
+    }
+
+    toastr.success(`프리셋 "${preset.name}"을 불러왔습니다.`);
+}
+
+function collectCurrentRules() {
+    const ranges = [];
+    $('.tc-range-row').each(function() {
+        const start = $(this).find('.tc-start-tag').val();
+        const end = $(this).find('.tc-end-tag').val();
+        if (start || end) ranges.push({ start, end });
+    });
+    const replacements = [];
+    $('.tc-replace-row').each(function() {
+        const find = $(this).find('.tc-find-word').val();
+        const replace = $(this).find('.tc-replace-word').val();
+        if (find) replacements.push({ find, replace });
+    });
+    return { ranges, replacements };
 }
 
 /**
@@ -220,9 +328,10 @@ function renderHistoryTags() {
     });
 }
 function deleteHistoryItem(index) {
-    let history = getHistory();
+    const storageKey = getCurrentHistoryKey();
+    let history = getHistory(storageKey);
     history.splice(index, 1); 
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+    localStorage.setItem(storageKey, JSON.stringify(history));
     renderHistoryTags(); 
 }
 function applyTagToInput(type, data) {
@@ -253,12 +362,14 @@ function applyTagToInput(type, data) {
 function addRangeRow(start = "", end = "") {
     const $row = $(`
         <div class="tc-input-row tc-range-row">
-            <input type="text" class="tc-start-tag" style="flex:1" placeholder="시작" value="${start}">
+            <input type="text" class="tc-start-tag" style="flex:1" placeholder="시작">
             <span>~</span>
-            <input type="text" class="tc-end-tag" style="flex:1" placeholder="종료" value="${end}">
+            <input type="text" class="tc-end-tag" style="flex:1" placeholder="종료">
             <i class="fa-solid fa-circle-xmark tc-row-remove"></i>
         </div>
     `);
+    $row.find('.tc-start-tag').val(start);
+    $row.find('.tc-end-tag').val(end);
     $row.find('.tc-row-remove').on('click', () => $row.remove());
     $('#tc-range-container').append($row);
 }
@@ -266,12 +377,14 @@ function addRangeRow(start = "", end = "") {
 function addReplaceRow(find = "", replace = "") {
     const $row = $(`
         <div class="tc-input-row tc-replace-row">
-            <input type="text" class="tc-find-word" style="flex:1" placeholder="찾을 단어" value="${find}">
+            <input type="text" class="tc-find-word" style="flex:1" placeholder="찾을 단어">
             <span>→</span>
-            <input type="text" class="tc-replace-word" style="flex:1" placeholder="바꿀 단어" value="${replace}">
+            <input type="text" class="tc-replace-word" style="flex:1" placeholder="바꿀 단어">
             <i class="fa-solid fa-circle-xmark tc-row-remove"></i>
         </div>
     `);
+    $row.find('.tc-find-word').val(find);
+    $row.find('.tc-replace-word').val(replace);
     $row.find('.tc-row-remove').on('click', () => $row.remove());
     $('#tc-replace-container').append($row);
 }
@@ -281,20 +394,11 @@ function addReplaceRow(find = "", replace = "") {
  */
 function toggleCompareMode() {
     isCompareMode = !isCompareMode;
-    const $origView = $('#tc-original-view');
-    const $modView = $('#tc-modified-view');
+    const $origView   = $('#tc-original-view');
+    const $modView    = $('#tc-modified-view');
     const $origPreview = $('#tc-original-preview');
-    const $modPreview = $('#tc-modified-preview');
-    const $btn = $('#tc-compare-toggle-btn');
-
-    const syncScroll = (e) => {
-        const target = e.target;
-        if (target.id === 'tc-original-preview') {
-            $modPreview[0].scrollTop = target.scrollTop;
-        } else {
-            $origPreview[0].scrollTop = target.scrollTop;
-        }
-    };
+    const $modPreview  = $('#tc-modified-preview');
+    const $btn        = $('#tc-compare-toggle-btn');
 
     if (isCompareMode) {
         $btn.addClass('active').text('🔍 편집 모드로 돌아가기');
@@ -311,8 +415,9 @@ function toggleCompareMode() {
         $modPreview.html(diff.newHtml);
         
         if (!isMobile()) {
-            $origPreview.on('scroll', syncScroll);
-            $modPreview.on('scroll', syncScroll);
+            // 고정 참조로 등록 — 중복 등록 방지
+            $origPreview.off('scroll', syncScrollHandler).on('scroll', syncScrollHandler);
+            $modPreview.off('scroll', syncScrollHandler).on('scroll', syncScrollHandler);
         }
 
         toastr.info("대조 모드가 시작됩니다");
@@ -322,8 +427,8 @@ function toggleCompareMode() {
         $origView.show(); $modView.show();
         $origPreview.hide(); $modPreview.hide();
         
-        $origPreview.off('scroll');
-        $modPreview.off('scroll');
+        $origPreview.off('scroll', syncScrollHandler);
+        $modPreview.off('scroll', syncScrollHandler);
     }
 }
 /**
@@ -363,9 +468,8 @@ function ensurePopupExists() {
         </div>
         <div class="tc-mode-tabs">
             <div class="tc-tab active" data-mode="original">원본 메시지 수정</div>
-            <!-- 기존 번역문 수정 탭 제거됨 -->
-            <div class="tc-tab" data-mode="llm_manual">LLM 번역 관리</div> <!-- [수정] 탭 이름 변경 -->
-            <div class="tc-tab" data-mode="prompts" id="tc-tab-prompts">프롬프트 수정</div>
+            <div class="tc-tab" data-mode="llm_manual">LLM 번역 관리</div> 
+            <div class="tc-tab" data-mode="prompts" id="tc-tab-prompts">JSON 수정</div>
         </div>
         <div class="tc-popup-body">
             <!-- 일반 편집 모드 영역 (LLM 모드 공유) -->
@@ -388,6 +492,13 @@ function ensurePopupExists() {
 
                 <div id="tc-history-area" class="tc-history-tags"></div>
 
+                <!-- 프리셋 영역 -->
+                <div class="tc-preset-section">
+                    <span class="tc-preset-title">📁</span>
+                    <div id="tc-preset-area"></div>
+                    <button id="tc-save-preset-btn" class="tc-preset-save-btn" title="현재 규칙을 프리셋으로 저장">+</button>
+                </div>
+
                 <div class="tc-action-buttons">
                     <button id="tc-process-btn" class="tc-btn-process">✨ 설정한 모든 내용으로 치환 실행</button>
                     <button id="tc-compare-toggle-btn" class="tc-btn-compare">⚖️ 원본과 대조하기</button>
@@ -408,18 +519,26 @@ function ensurePopupExists() {
             </div>
 
             <!-- 프롬프트 편집 모드 영역 -->
-            <div id="tc-prompt-edit-area" style="display:none; flex-direction:column; gap:10px; flex:1; height: 100%;">
-                <div class="tc-section-header">
-                    <label>프롬프트 JSON 및 이름 일괄 수정</label>
-                    <div style="display:flex; gap:5px;">
-                        <button id="tc-import-json-btn" class="tc-btn-add-row" style="background:#4a90e2; color:white;">📂 JSON 불러오기</button>
-                        <button id="tc-export-names-btn" class="tc-btn-add-row">📤 이름 내보내기</button>
-                        <button id="tc-import-names-btn" class="tc-btn-add-row">📥 이름 가져오기</button>
-                        <input type="file" id="tc-json-file-input" style="display:none;" accept=".json">
-                        <input type="file" id="tc-names-file-input" style="display:none;" accept=".txt">
+            <div id="tc-prompt-edit-area" style="display:none; flex-direction:column; gap:12px; flex:1; height: 100%;">
+                <div class="tc-prompt-toolbar">
+                    <button id="tc-import-json-btn" class="tc-prompt-load-btn">📂 JSON 불러오기</button>
+                    <div class="tc-prompt-tool-groups">
+                        <div class="tc-tool-group">
+                            <span class="tc-tool-group-label">이름</span>
+                            <button id="tc-export-names-btn" class="tc-tool-btn" title="프롬프트 name 항목을 txt로 저장">📤 내보내기</button>
+                            <button id="tc-import-names-btn" class="tc-tool-btn" title="txt 파일로 name 항목 일괄 교체">📥 가져오기</button>
+                        </div>
+                        <div class="tc-tool-group">
+                            <span class="tc-tool-group-label">이미지링크</span>
+                            <button id="tc-export-images-btn" class="tc-tool-btn" title="JSON 내 이미지 URL을 txt로 저장">📤 내보내기</button>
+                            <button id="tc-import-images-btn" class="tc-tool-btn" title="txt 파일의 새 URL로 이미지링크 일괄 교체">📥 가져오기</button>
+                        </div>
                     </div>
+                    <input type="file" id="tc-json-file-input" style="display:none;" accept=".json">
+                    <input type="file" id="tc-names-file-input" style="display:none;" accept=".txt">
+                    <input type="file" id="tc-images-file-input" style="display:none;" accept=".txt">
                 </div>
-                <textarea id="tc-prompt-json-view" class="tc-text-area" style="flex:1; font-family:monospace; font-size:12px; height:100%; white-space: pre;" placeholder="[📂 JSON 불러오기] 버튼을 눌러 실리태번 프롬프트 파일을 선택하세요."></textarea>
+                <textarea id="tc-prompt-json-view" class="tc-text-area" style="flex:1; font-family:monospace; font-size:12px; height:100%; white-space: pre;" placeholder="[📂 JSON 불러오기] 버튼을 눌러 파일을 선택하세요."></textarea>
             </div>
         </div>
         <div class="tc-popup-footer">
@@ -427,6 +546,40 @@ function ensurePopupExists() {
             <button id="tc-apply-btn" class="tc-footer-btn tc-btn-apply">메시지에 적용</button>
         </div>
         <div id="tc-resize-handle" class="tc-resizer"></div>
+
+        <!-- 이미지링크 가져오기 확인창 -->
+        <div id="tc-image-confirm-overlay">
+            <div id="tc-image-confirm-box">
+                <div class="tc-icb-header">
+                    <span>🖼️ 이미지링크 교체 확인</span>
+                    <i class="fa-solid fa-xmark tc-icb-close" id="tc-icb-close-btn"></i>
+                </div>
+                <div class="tc-icb-body">
+                    <div class="tc-icb-col">
+                        <div class="tc-icb-col-label">기존 링크 <span id="tc-icb-old-count"></span></div>
+                        <div id="tc-icb-old-list" class="tc-icb-list"></div>
+                    </div>
+                    <div class="tc-icb-col">
+                        <div class="tc-icb-col-label" style="display:flex; justify-content:space-between; align-items:center;">
+                            <span>새 링크 <span id="tc-icb-new-count"></span></span>
+                            <button id="tc-icb-sort-btn" class="tc-tool-btn" title="파일명 기준으로 기존 링크 순서에 맞게 자동 정렬">🔀 자동 정렬</button>
+                        </div>
+                        <div id="tc-icb-new-list" class="tc-icb-list tc-icb-new-placeholder">
+                            <span class="tc-icb-placeholder-text">📂 아래 버튼으로 txt 파일을 선택하세요.</span>
+                        </div>
+                        <button id="tc-icb-file-btn" class="tc-prompt-load-btn" style="flex-shrink:0;">📂 새 링크 txt 불러오기</button>
+                        <input type="file" id="tc-images-file-input" style="display:none;" accept=".txt">
+                    </div>
+                </div>
+                <div class="tc-icb-footer">
+                    <span id="tc-icb-status" class="tc-icb-status"></span>
+                    <div style="display:flex; gap:8px;">
+                        <button id="tc-icb-cancel-btn" class="tc-footer-btn tc-btn-cancel">취소</button>
+                        <button id="tc-icb-apply-btn" class="tc-footer-btn tc-btn-apply">교체 실행</button>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>`;
 
     $('body').append(html);
@@ -441,6 +594,18 @@ function ensurePopupExists() {
     $('#tc-add-range-btn').on('click', () => addRangeRow());
     $('#tc-add-replace-btn').on('click', () => addReplaceRow());
     $('#tc-compare-toggle-btn').on('click', toggleCompareMode);
+
+    $('#tc-save-preset-btn').on('click', () => {
+        const { ranges, replacements } = collectCurrentRules();
+        if (ranges.length === 0 && replacements.length === 0) {
+            toastr.warning("저장할 규칙이 없습니다.");
+            return;
+        }
+        const name = prompt("프리셋 이름을 입력하세요:");
+        if (!name || !name.trim()) return;
+        savePreset(name.trim(), ranges, replacements);
+        toastr.success(`프리셋 "${name.trim()}"이 저장되었습니다.`);
+    });
     
     $('#tc-close-x, #tc-cancel-btn').on('click', () => {
         $('#tc-popup-window').hide();
@@ -451,7 +616,6 @@ function ensurePopupExists() {
     // 탭 클릭 이벤트
     $('.tc-tab').on('click', async function() {
         const mode = $(this).attr('data-mode');
-        currentEditMode = mode;
         
         $('.tc-tab').removeClass('active');
         $(this).addClass('active');
@@ -474,6 +638,8 @@ function ensurePopupExists() {
             $('#tc-apply-btn').text('💾 DB 업데이트');
             $('#tc-left-label').text('기존 번역 데이터');
             $('#tc-right-label').text('최종 번역문');
+            $('.tc-preset-section').hide();
+            renderHistoryTags();
             
             $('#tc-original-view').val("DB 조회 중...");
             $('#tc-modified-view').val("DB 조회 중...");
@@ -494,6 +660,8 @@ function ensurePopupExists() {
             $('#tc-apply-btn').text('메시지에 적용');
             $('#tc-left-label').text('원본 메시지');
             $('#tc-right-label').text('최종 결과 (자유 편집)');
+            $('.tc-preset-section').show();
+            renderHistoryTags();
             content = message.mes;
             toastr.info(`원본 수정 모드로 전환되었습니다.`);
         }
@@ -588,7 +756,6 @@ function ensurePopupExists() {
         loadedFileName = "preset.json";
     });
     
-    // (이하 프롬프트 및 치환 버튼 이벤트들 기존 유지)
     $('#tc-import-json-btn').on('click', () => $('#tc-json-file-input').click());
     $('#tc-json-file-input').on('change', function(e) {
         const file = e.target.files[0];
@@ -617,7 +784,118 @@ function ensurePopupExists() {
             downloadTextFile(names, 'prompt_names.txt');
         } catch (e) { toastr.error("오류: " + e.message); }
     });
+    $('#tc-export-images-btn').on('click', () => {
+        try {
+            const jsonStr = $('#tc-prompt-json-view').val();
+            if (!jsonStr) return toastr.warning("JSON이 비어있습니다.");
+            const imageRegex = /https?:\/\/[^\s'"\\]+\.(?:png|jpg|jpeg|gif|webp)[^\s'"\\]*/gi;
+            const matches = jsonStr.match(imageRegex);
+            if (!matches || matches.length === 0) return toastr.warning("이미지 링크를 찾을 수 없습니다.");
+            const unique = [...new Set(matches)];
+            downloadTextFile(unique.join('\n'), 'image_links.txt');
+            toastr.success(`이미지 링크 ${unique.length}개를 내보냈습니다.`);
+        } catch (e) { toastr.error("오류: " + e.message); }
+    });
     $('#tc-import-names-btn').on('click', () => $('#tc-names-file-input').click());
+    let tcNewUrls = [];
+
+    function renderNewUrlList(urls) {
+        const $newList = $('#tc-icb-new-list');
+        $newList.removeClass('tc-icb-new-placeholder').empty();
+        if (urls.length === 0) {
+            $newList.addClass('tc-icb-new-placeholder').append('<span class="tc-icb-placeholder-text">📂 아래 버튼으로 txt 파일을 선택하세요.</span>');
+            $('#tc-icb-new-count').text('');
+            $('#tc-icb-status').text('');
+            return;
+        }
+        urls.forEach((url, i) => {
+            $newList.append(`<div class="tc-icb-row"><span class="tc-icb-idx">${i + 1}</span><span class="tc-icb-url" title="${url}">${url}</span></div>`);
+        });
+        const oldCount = parseInt($('#tc-icb-old-count').text().replace(/\D/g, '')) || 0;
+        $('#tc-icb-new-count').text(`(${urls.length}개)`);
+        const $status = $('#tc-icb-status');
+        if (urls.length < oldCount) $status.text(`⚠️ ${oldCount - urls.length}개 부족`).css('color', '#e67e22');
+        else if (urls.length > oldCount) $status.text(`⚠️ ${urls.length - oldCount}개 초과`).css('color', '#e67e22');
+        else $status.text(`✅ 개수 일치`).css('color', '#28a745');
+    }
+
+    $('#tc-import-images-btn').on('click', () => {
+        const jsonStr = $('#tc-prompt-json-view').val();
+        if (!jsonStr) return toastr.warning("JSON이 비어있습니다.");
+        const imageRegex = /https?:\/\/[^\s'"\\]+\.(?:png|jpg|jpeg|gif|webp)[^\s'"\\]*/gi;
+        const oldUrls = [...new Set(jsonStr.match(imageRegex) || [])];
+        if (oldUrls.length === 0) return toastr.warning("JSON에서 이미지링크를 찾을 수 없습니다.");
+
+        const $oldList = $('#tc-icb-old-list');
+        $oldList.empty();
+        oldUrls.forEach((url, i) => {
+            $oldList.append(`<div class="tc-icb-row"><span class="tc-icb-idx">${i + 1}</span><span class="tc-icb-url" title="${url}">${url}</span></div>`);
+        });
+        $('#tc-icb-old-count').text(`(${oldUrls.length}개)`);
+        tcNewUrls = [];
+        renderNewUrlList([]);
+        $('#tc-icb-status').text('');
+        $('#tc-image-confirm-overlay').css('display', 'flex');
+    });
+
+    $('#tc-icb-file-btn').on('click', () => $('#tc-images-file-input').click());
+    $('#tc-images-file-input').on('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            tcNewUrls = e.target.result.split(/\r?\n/).map(u => u.trim()).filter(Boolean);
+            renderNewUrlList(tcNewUrls);
+            if (tcNewUrls.length === 0) toastr.warning("파일에 URL이 없습니다.");
+        };
+        reader.readAsText(file);
+        $(this).val('');
+    });
+
+    $('#tc-icb-sort-btn').on('click', () => {
+        if (tcNewUrls.length === 0) return toastr.warning("새 링크 txt를 먼저 불러오세요.");
+        const oldUrls = $('#tc-icb-old-list').find('.tc-icb-url').map((_, el) => $(el).attr('title')).get();
+
+        const getFilename = url => url.split('/').pop().split('?')[0].toLowerCase();
+        const getCoreFilename = url => getFilename(url).replace(/\.[^.]+$/, '');
+
+        const sorted = oldUrls.map(oldUrl => {
+            const core = getCoreFilename(oldUrl);
+            return tcNewUrls.find(newUrl => getFilename(newUrl).includes(core)) || null;
+        });
+
+        const unmatched = tcNewUrls.filter(newUrl => {
+            const fn = getFilename(newUrl);
+            return !oldUrls.some(oldUrl => fn.includes(getCoreFilename(oldUrl)));
+        });
+
+        let unmatchedIdx = 0;
+        tcNewUrls = sorted.map(u => u || (unmatched[unmatchedIdx++] || ''));
+        renderNewUrlList(tcNewUrls);
+        toastr.success("파일명 기준으로 정렬했습니다.");
+    });
+
+    $('#tc-icb-close-btn, #tc-icb-cancel-btn').on('click', () => {
+        $('#tc-image-confirm-overlay').hide();
+        tcNewUrls = [];
+    });
+
+    $('#tc-icb-apply-btn').on('click', () => {
+        if (tcNewUrls.length === 0) return toastr.warning("새 링크 txt를 먼저 불러오세요.");
+        const jsonStr = $('#tc-prompt-json-view').val();
+        const imageRegex = /https?:\/\/[^\s'"\\]+\.(?:png|jpg|jpeg|gif|webp)[^\s'"\\]*/gi;
+        const oldUrls = [...new Set(jsonStr.match(imageRegex) || [])];
+        const urlMap = {};
+        oldUrls.forEach((old, i) => {
+            urlMap[old] = tcNewUrls[i] || tcNewUrls[tcNewUrls.length - 1];
+        });
+        const replaced = jsonStr.replace(imageRegex, (match) => urlMap[match] || match);
+        $('#tc-prompt-json-view').val(replaced);
+        $('#tc-image-confirm-overlay').hide();
+        tcNewUrls = [];
+        toastr.success(`이미지링크 ${oldUrls.length}종을 교체했습니다.`);
+    });
+
     $('#tc-names-file-input').on('change', function(e) {
         const file = e.target.files[0];
         if (!file) return;
@@ -657,7 +935,6 @@ $('#tc-process-btn').on('click', () => {
         const processed = processTextMulti(currentContent, ranges, replacements);
         
         $('#tc-modified-view').val(processed.trim());
-        lastProcessedContent = processed.trim();
         
         if (isCompareMode) {
             const $origView = $('#tc-original-view');
@@ -738,16 +1015,29 @@ function setupResizable($popup, $handle) {
 }
 async function openCleanerPopup(mesId) {
     ensurePopupExists();
-    currentMesId = mesId;
-    isCompareMode = false; 
-    currentEditMode = "original"; 
+    isCompareMode = false;
     
     $('#tc-prompt-json-view').val('');
     loadedFileName = "preset.json";
-	
+
+    // DOM에서 실제 mesid를 다시 읽어와 인덱스 불일치 방지
+    const $mesBlock = $(`.mes[mesid="${mesId}"]`);
+    const latestMesId = $mesBlock.length ? parseInt($mesBlock.attr('mesid')) : mesId;
+    currentMesId = latestMesId;
+
     const context = getContext();
-    const message = context.chat[mesId];
-    const content = message.mes;
+    const message = context.chat[latestMesId];
+    if (!message) {
+        // 혹시 chat 배열 마지막 메시지로 fallback
+        const lastIndex = context.chat.length - 1;
+        if (lastIndex >= 0) {
+            currentMesId = lastIndex;
+        } else {
+            toastr.error("메시지를 찾을 수 없습니다.");
+            return;
+        }
+    }
+    const content = (context.chat[currentMesId] || {}).mes || '';
     
     
     $('.tc-tab').removeClass('active');
@@ -758,7 +1048,8 @@ async function openCleanerPopup(mesId) {
     $('#tc-prompt-edit-area').hide();
     $('#tc-left-label').text('원본 메시지');
     $('#tc-right-label').text('최종 결과 (자유 편집)');
-    $('#tc-apply-btn').text('메시지에 적용');
+	$('#tc-apply-btn').text('메시지에 적용');
+	$('.tc-preset-section').show();
 
 
     
@@ -767,14 +1058,13 @@ async function openCleanerPopup(mesId) {
     $('#tc-original-preview').hide();
     $('#tc-modified-preview').hide();
     $('#tc-compare-toggle-btn').removeClass('active').text('⚖️ 원본과 대조하기');
-    
-    lastProcessedContent = content;
 
     $('#tc-range-container, #tc-replace-container').empty();
     addRangeRow();
     addReplaceRow();
     
     renderHistoryTags();
+    renderPresetTags();
 
     const savedTheme = localStorage.getItem(THEME_KEY) || 'dark';
     applyTheme(savedTheme);
@@ -964,7 +1254,7 @@ async function updateTranslationByOriginalText(originalText, newTranslation) {
         const index = store.index('originalText');
         const request = index.get(originalText);
 
-        request.onsuccess = async (event) => {
+        request.onsuccess = (event) => {
             const record = event.target.result;
             if (record) {
                 const updateRequest = store.put({ 
@@ -974,20 +1264,13 @@ async function updateTranslationByOriginalText(originalText, newTranslation) {
                     model: model, 
                     date: date 
                 });
-                updateRequest.onsuccess = () => {
-                    resolve();
-                };
-                updateRequest.onerror = (e) => {
-                    reject(new Error('put error'));
-                };
+                updateRequest.onsuccess = () => resolve();
+                updateRequest.onerror = (e) => reject(new Error('put error'));
             } else {
-                
-                try {
-                    await addTranslationToDB(originalText, newTranslation);
-                    resolve();
-                } catch(e) {
-                    reject(e);
-                }
+                // 현재 트랜잭션이 완전히 닫힌 뒤 새 트랜잭션으로 추가
+                transaction.oncomplete = () => {
+                    addTranslationToDB(originalText, newTranslation).then(resolve).catch(reject);
+                };
             }
         };
         request.onerror = (e) => {

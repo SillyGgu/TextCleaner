@@ -588,11 +588,87 @@
         bottom: -5px !important;
         z-index: 9999 !important; 
     }
+
 }
 
-#tc-popup-window *::-webkit-scrollbar {
-    width: 4px;  
-    height: 4px; 
+/* 프리셋 섹션 — 한 줄 인라인 */
+.tc-preset-section {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    margin-bottom: 8px;
+    min-height: 24px;
+}
+
+.tc-preset-title {
+    font-size: 0.8rem;
+    flex-shrink: 0;
+    opacity: 0.6;
+}
+
+#tc-preset-area {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 5px;
+    overflow-x: auto;
+    flex: 1;
+    align-items: center;
+    scrollbar-width: none;
+}
+#tc-preset-area::-webkit-scrollbar { display: none; }
+
+.tc-preset-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px 2px 8px;
+    background: transparent;
+    border: 1px solid var(--tc-accent);
+    border-radius: 4px;
+    color: var(--tc-accent);
+    font-size: 0.75rem;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+    flex-shrink: 0;
+}
+.tc-preset-chip:hover {
+    background: var(--tc-accent);
+    color: white;
+}
+.tc-preset-chip-del {
+    font-size: 0.65rem;
+    opacity: 0.5;
+    line-height: 1;
+    padding: 0 1px;
+    transition: opacity 0.15s;
+}
+.tc-preset-chip:hover .tc-preset-chip-del {
+    opacity: 1;
+}
+
+.tc-preset-save-btn {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    border: 1px solid var(--tc-border) !important;
+    background: transparent !important;
+    color: var(--tc-text-sub) !important;
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: 0.15s;
+    padding: 0 !important;
+}
+.tc-preset-save-btn:hover {
+    border-color: var(--tc-accent) !important;
+    color: var(--tc-accent) !important;
 }
 
 
@@ -636,4 +712,265 @@
     #tc-popup-window .tc-preview-area::-webkit-scrollbar-corner {
         background-color: transparent;
     }
+}
+
+/* ── 드래그 번역 / 상태창 렌더링 ─────────────────────── */
+.tc-status-box {
+    display: inline-block;
+    background: rgba(74, 144, 226, 0.12);
+    border: 1px solid rgba(74, 144, 226, 0.45);
+    border-radius: 6px;
+    padding: 2px 7px;
+    margin: 2px 1px;
+    line-height: 1.8;
+    vertical-align: middle;
+}
+
+.tc-status-tag {
+    font-size: 10px;
+    color: #4a90e2;
+    opacity: 0.75;
+    font-family: monospace;
+    user-select: none;
+}
+
+#tc-llm-toolbar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+#tc-status-render-area {
+    border: 1px solid rgba(74, 144, 226, 0.3);
+}
+
+/* 라이트 테마 대응 */
+#tc-popup-window.theme-lavender .tc-status-box,
+#tc-popup-window.theme-pink .tc-status-box,
+#tc-popup-window.theme-beige .tc-status-box,
+#tc-popup-window.theme-blue .tc-status-box {
+    background: rgba(74, 144, 226, 0.08);
+}
+
+#tc-popup-window.theme-lavender #tc-status-render-area,
+#tc-popup-window.theme-pink #tc-status-render-area,
+#tc-popup-window.theme-beige #tc-status-render-area,
+#tc-popup-window.theme-blue #tc-status-render-area {
+    background: rgba(255,255,255,0.3);
+}
+
+/* ── 프롬프트 탭 툴바 ───────────────────────────────── */
+.tc-prompt-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+    padding: 10px 14px;
+    background: var(--tc-bg-group);
+    border: 1px solid var(--tc-border-light);
+    border-radius: 10px;
+}
+
+.tc-prompt-load-btn {
+    background: var(--tc-accent) !important;
+    color: white !important;
+    border: none !important;
+    padding: 6px 14px !important;
+    border-radius: 7px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 600;
+    transition: 0.2s;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.tc-prompt-load-btn:hover {
+    background: var(--tc-accent-hover) !important;
+    transform: translateY(-1px);
+}
+
+.tc-prompt-tool-groups {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    flex: 1;
+}
+
+.tc-tool-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--tc-bg-input);
+    border: 1px solid var(--tc-border);
+    border-radius: 8px;
+    padding: 4px 8px;
+}
+
+.tc-tool-group-label {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--tc-text-sub);
+    padding-right: 4px;
+    border-right: 1px solid var(--tc-border);
+    margin-right: 2px;
+    white-space: nowrap;
+}
+
+.tc-tool-btn {
+    background: transparent !important;
+    color: var(--tc-text-main) !important;
+    border: none !important;
+    padding: 3px 8px !important;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: 500;
+    transition: 0.15s;
+    white-space: nowrap;
+}
+.tc-tool-btn:hover {
+    background: var(--tc-accent) !important;
+    color: white !important;
+}
+
+/* ── 이미지링크 교체 확인창 ─────────────────────────── */
+#tc-image-confirm-overlay {
+    display: none;
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.55);
+    z-index: 10;
+    border-radius: 12px;
+    align-items: center;
+    justify-content: center;
+}
+
+#tc-image-confirm-box {
+    background: var(--tc-bg-main);
+    border: 1px solid var(--tc-border);
+    border-radius: 10px;
+    width: 88%;
+    max-height: 80%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+}
+
+.tc-icb-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    background: var(--tc-bg-header);
+    border-bottom: 1px solid var(--tc-border-light);
+    font-weight: 600;
+    font-size: 0.9rem;
+    flex-shrink: 0;
+}
+
+.tc-icb-close {
+    cursor: pointer;
+    color: var(--tc-text-sub);
+    padding: 4px;
+    border-radius: 4px;
+    transition: 0.2s;
+}
+.tc-icb-close:hover { color: #ff5f56; }
+
+.tc-icb-body {
+    display: flex;
+    gap: 12px;
+    padding: 14px 16px;
+    flex: 1;
+    overflow: hidden;
+    min-height: 0;
+}
+
+.tc-icb-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+
+.tc-icb-col-label {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--tc-text-sub);
+    flex-shrink: 0;
+}
+
+.tc-icb-list {
+    flex: 1;
+    overflow-y: auto;
+    background: var(--tc-bg-input);
+    border: 1px solid var(--tc-border);
+    border-radius: 6px;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.tc-icb-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+}
+
+.tc-icb-idx {
+    flex-shrink: 0;
+    width: 18px;
+    text-align: right;
+    color: var(--tc-text-sub);
+    font-size: 0.7rem;
+}
+
+.tc-icb-url {
+    color: var(--tc-text-main);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: monospace;
+}
+
+.tc-icb-textarea {
+    flex: 1;
+    resize: none;
+    font-family: monospace;
+    font-size: 0.75rem;
+    min-height: 0;
+}
+
+.tc-icb-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 16px;
+    border-top: 1px solid var(--tc-border-light);
+    flex-shrink: 0;
+}
+
+.tc-icb-status {
+    font-size: 0.82rem;
+    font-weight: 600;
+}
+
+.tc-icb-new-placeholder {
+    align-items: center;
+    justify-content: center;
+}
+
+.tc-icb-placeholder-text {
+    font-size: 0.8rem;
+    color: var(--tc-text-sub);
+    text-align: center;
+    padding: 20px;
+    line-height: 1.8;
 }
