@@ -61,6 +61,11 @@ function processTextMulti(originalText, ranges, replacements) {
             const escapedEnd = r.end.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const regex = new RegExp(`${escapedStart}[\\s\\S]*?${escapedEnd}`, 'g');
             newText = newText.replace(regex, '');
+        } else if (!r.start && r.end) {
+            // A가 비어있고 B만 있는 경우: 맨 처음부터 첫 번째 B(포함)까지 삭제
+            const escapedEnd = r.end.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regex = new RegExp(`^[\\s\\S]*?${escapedEnd}`);
+            newText = newText.replace(regex, '');
         }
     });
 
@@ -1120,7 +1125,12 @@ function addCleanerButton($mesBlock) {
         .addClass('mes_button tc-cleaner-btn fa-solid fa-broom interactable')
         .attr('title', '텍스트 수정 도구')
         .css({ 'opacity': '0.8', 'margin-left': '5px', 'color': '#4a90e2' })
-        .on('click', (e) => { e.stopPropagation(); openCleanerPopup(mesId); });
+        .on('click', (e) => {
+            e.stopPropagation();
+            // 클릭 시점에 부모 .mes의 현재 mesid를 다시 읽음 (move up/down 대응)
+            const currentId = $btn.closest('.mes').attr('mesid');
+            openCleanerPopup(currentId !== undefined ? currentId : mesId);
+        });
     $mesBlock.find('.extraMesButtons').append($btn);
 }
 
