@@ -407,10 +407,11 @@
     display: inline;
 }
 
-.tc-diff-phantom {
-    visibility: hidden !important;
-    pointer-events: none !important;
-    user-select: none !important;
+.tc-diff-removed {
+    background-color: rgba(220, 53, 69, 0.3) !important;
+    border-bottom: 2px solid #dc3545;
+    color: #ff8888 !important;
+    text-decoration: line-through !important;
     display: inline;
 }
 
@@ -765,13 +766,14 @@
 .tc-prompt-toolbar {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     flex-shrink: 0;
     flex-wrap: wrap;
-    padding: 10px 14px;
+    padding: 8px 12px;
     background: var(--tc-bg-group);
     border: 1px solid var(--tc-border-light);
     border-radius: 10px;
+    row-gap: 6px;
 }
 
 .tc-prompt-load-btn {
@@ -794,9 +796,10 @@
 
 .tc-prompt-tool-groups {
     display: flex;
-    gap: 8px;
+    gap: 6px;
     flex-wrap: wrap;
     flex: 1;
+    min-width: 0;
 }
 
 .tc-tool-group {
@@ -807,6 +810,7 @@
     border: 1px solid var(--tc-border);
     border-radius: 8px;
     padding: 4px 8px;
+    flex-shrink: 0;
 }
 
 .tc-tool-group-label {

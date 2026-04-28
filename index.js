@@ -93,93 +93,105 @@ function escapeHtml(text) {
  * 단순 텍스트 대조(Diff) 로직 (단어 단위)
  */
 function getDiffHtml(oldText, newText) {
-    if (oldText.length > 3000 || newText.length > 3000) {
-        return {
-            oldHtml: escapeHtml(oldText).replace(/\n/g, '<br>'),
-            newHtml: escapeHtml(newText).replace(/\n/g, '<br>')
-        };
-    }
-    const oldChars = Array.from(oldText);
-    const newChars = Array.from(newText);
-    const n = oldChars.length;
-    const m = newChars.length;
-
-    const dp = Array(n + 1).fill(null).map(() => Array(m + 1).fill(0));
-    for (let i = 1; i <= n; i++) {
-        for (let j = 1; j <= m; j++) {
-            if (oldChars[i - 1] === newChars[j - 1]) dp[i][j] = dp[i - 1][j - 1] + 1;
-            else dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
-        }
+    // 텍스트를 라인 단위로 분리해서 라인별 diff 수행
+    // 각 라인 내부는 토큰(한글/일본어/중국어 1글자, 영단어, 기타) 단위로 세분화
+    function tokenize(text) {
+        // CJK(한중일) 1글자씩, 영숫자 단어, 공백, 기타 문자 단위로 분리
+        return text.match(/[\u1100-\u11FF\u3040-\u30FF\u3400-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF]|[A-Za-z0-9_']+|[\s]+|./gsu) || [];
     }
 
-    let i = n, j = m, diffs = [];
-    while (i > 0 || j > 0) {
-        if (i > 0 && j > 0 && oldChars[i - 1] === newChars[j - 1]) {
-            diffs.unshift({ type: 'common', val: oldChars[i - 1] });
-            i--; j--;
-        } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-            diffs.unshift({ type: 'added', val: newChars[j - 1] });
-            j--;
-        } else {
-            diffs.unshift({ type: 'removed', val: oldChars[i - 1] });
-            i--;
-        }
-    }
-
-    let merged = [];
-    diffs.forEach(item => {
-        if (merged.length > 0 && merged[merged.length - 1].type === item.type) {
-            merged[merged.length - 1].val += item.val;
-        } else {
-            merged.push(item);
-        }
-    });
-
-    for (let iter = 0; iter < 3; iter++) { 
-        let cleaned = [];
-        for (let k = 0; k < merged.length; k++) {
-            let item = merged[k];
-            if (item.type === 'common' && item.val.length < 4) {
-                let prev = cleaned[cleaned.length - 1];
-                let next = merged[k + 1];
-
-                if (prev && (prev.type === 'added' || prev.type === 'removed')) {
-                    prev.val += item.val;
-                    continue;
-                } else if (next && (next.type === 'added' || next.type === 'removed')) {
-                    next.val = item.val + next.val;
-                    continue;
-                }
+    function lcs(a, b) {
+        const n = a.length, m = b.length;
+        // 메모리 절약: 2행만 유지
+        let prev = new Array(m + 1).fill(0);
+        let curr = new Array(m + 1).fill(0);
+        const table = [];
+        for (let i = 0; i < n; i++) {
+            for (let j = 0; j < m; j++) {
+                curr[j + 1] = a[i] === b[j] ? prev[j] + 1 : Math.max(prev[j + 1], curr[j]);
             }
-            
-            if (cleaned.length > 0 && cleaned[cleaned.length - 1].type === item.type) {
-                cleaned[cleaned.length - 1].val += item.val;
+            table.push([...curr]);
+            [prev, curr] = [curr, new Array(m + 1).fill(0)];
+        }
+        return table;
+    }
+
+    function buildDiff(aTokens, bTokens) {
+        if (aTokens.length === 0 && bTokens.length === 0) return [];
+        if (aTokens.length === 0) return bTokens.map(t => ({ type: 'added', val: t }));
+        if (bTokens.length === 0) return aTokens.map(t => ({ type: 'removed', val: t }));
+
+        const table = lcs(aTokens, bTokens);
+        const result = [];
+        let i = aTokens.length - 1, j = bTokens.length - 1;
+
+        while (i >= 0 || j >= 0) {
+            if (i >= 0 && j >= 0 && aTokens[i] === bTokens[j]) {
+                result.unshift({ type: 'common', val: aTokens[i] });
+                i--; j--;
+            } else if (j >= 0 && (i < 0 || (table[i] && table[i][j] >= (i > 0 ? table[i - 1][j + 1] : 0)))) {
+                result.unshift({ type: 'added', val: bTokens[j] });
+                j--;
             } else {
-                cleaned.push(item);
+                result.unshift({ type: 'removed', val: aTokens[i] });
+                i--;
             }
         }
-        merged = cleaned;
+        return result;
     }
 
-    let oldHtml = "", newHtml = "";
-    merged.forEach(item => {
-        const escaped = escapeHtml(item.val);
-        if (item.type === 'common') {
-            oldHtml += escaped;
-            newHtml += escaped;
-        } else if (item.type === 'added') {
-            oldHtml += `<span class="tc-diff-phantom">${escaped}</span>`;
-            newHtml += `<span class="tc-diff-added">${escaped}</span>`;
-        } else if (item.type === 'removed') {
-            oldHtml += `<span class="tc-diff-removed">${escaped}</span>`;
-            newHtml += `<span class="tc-diff-phantom">${escaped}</span>`;
+    function mergeSame(diffs) {
+        const merged = [];
+        for (const d of diffs) {
+            if (merged.length && merged[merged.length - 1].type === d.type) {
+                merged[merged.length - 1].val += d.val;
+            } else {
+                merged.push({ ...d });
+            }
         }
-    });
+        return merged;
+    }
 
-    return { 
-        oldHtml: oldHtml.replace(/\n/g, '<br>'), 
-        newHtml: newHtml.replace(/\n/g, '<br>') 
-    };
+    function diffToHtml(diffs) {
+        let oldHtml = '', newHtml = '';
+        for (const d of diffs) {
+            const esc = escapeHtml(d.val).replace(/\n/g, '<br>');
+            if (d.type === 'common') {
+                oldHtml += esc;
+                newHtml += esc;
+            } else if (d.type === 'removed') {
+                oldHtml += `<span class="tc-diff-removed">${esc}</span>`;
+            } else if (d.type === 'added') {
+                newHtml += `<span class="tc-diff-added">${esc}</span>`;
+            }
+        }
+        return { oldHtml, newHtml };
+    }
+
+    // 텍스트가 너무 길면 라인 단위 diff만 수행 (성능)
+    const MAX_TOKENS = 4000;
+    const aTokens = tokenize(oldText);
+    const bTokens = tokenize(newText);
+
+    let diffs;
+    if (aTokens.length > MAX_TOKENS || bTokens.length > MAX_TOKENS) {
+        // 라인 단위로만 diff
+        const aLines = oldText.split('\n');
+        const bLines = newText.split('\n');
+        diffs = buildDiff(aLines, bLines).map(d => ({
+            type: d.type,
+            val: d.val + '\n'
+        }));
+        // 마지막 개행 정리
+        if (diffs.length && diffs[diffs.length - 1].val.endsWith('\n\n')) {
+            diffs[diffs.length - 1].val = diffs[diffs.length - 1].val.slice(0, -1);
+        }
+    } else {
+        diffs = buildDiff(aTokens, bTokens);
+    }
+
+    const merged = mergeSame(diffs);
+    return diffToHtml(merged);
 }
 
 /**
@@ -399,39 +411,37 @@ function addReplaceRow(find = "", replace = "") {
  */
 function toggleCompareMode() {
     isCompareMode = !isCompareMode;
-    const $origView   = $('#tc-original-view');
-    const $modView    = $('#tc-modified-view');
+    const $origView    = $('#tc-original-view');
+    const $modView     = $('#tc-modified-view');
     const $origPreview = $('#tc-original-preview');
     const $modPreview  = $('#tc-modified-preview');
-    const $btn        = $('#tc-compare-toggle-btn');
+    const $btn         = $('#tc-compare-toggle-btn');
 
     if (isCompareMode) {
         $btn.addClass('active').text('🔍 편집 모드로 돌아가기');
-        
-        $origView.hide(); $modView.hide();
-        $origPreview.show(); $modPreview.show();
 
         const originalText = $origView.val();
         const modifiedText = $modView.val();
 
+        $origView.hide(); $modView.hide();
+        $origPreview.show(); $modPreview.show();
+
         const diff = getDiffHtml(originalText, modifiedText);
-        
         $origPreview.html(diff.oldHtml);
         $modPreview.html(diff.newHtml);
-        
+
         if (!isMobile()) {
-            // 고정 참조로 등록 — 중복 등록 방지
             $origPreview.off('scroll', syncScrollHandler).on('scroll', syncScrollHandler);
             $modPreview.off('scroll', syncScrollHandler).on('scroll', syncScrollHandler);
         }
 
-        toastr.info("대조 모드가 시작됩니다");
+        toastr.info('대조 모드가 시작됩니다');
     } else {
         $btn.removeClass('active').text('⚖️ 원본과 대조하기');
-        
+
         $origView.show(); $modView.show();
         $origPreview.hide(); $modPreview.hide();
-        
+
         $origPreview.off('scroll', syncScrollHandler);
         $modPreview.off('scroll', syncScrollHandler);
     }
@@ -957,34 +967,55 @@ $('#tc-process-btn').on('click', () => {
 function setupDraggable($popup, $header) {
     let isDragging = false;
     let startX, startY, startLeft, startTop;
+    let rafId = null;
+    let pendingLeft, pendingTop;
+
+    const popupEl = $popup[0];
 
     $header.on('mousedown', (e) => {
-        if (isMobile()) return; 
+        if (isMobile()) return;
         if (e.target.closest('.tc-popup-close-btn') || e.target.closest('.tc-btn-add-row') || e.target.closest('.tc-theme-dot')) return;
         isDragging = true;
         startX = e.clientX; startY = e.clientY;
         const pos = $popup.position();
         startLeft = pos.left; startTop = pos.top;
+        pendingLeft = startLeft; pendingTop = startTop;
         $header.css('cursor', 'grabbing');
+        // will-change로 GPU 합성 레이어 예약
+        popupEl.style.willChange = 'left, top';
         e.preventDefault();
     });
 
-    $(window).on('mousemove', (e) => {
+    const onMouseMove = (e) => {
         if (!isDragging) return;
         let nl = startLeft + (e.clientX - startX);
         let nt = startTop + (e.clientY - startY);
         nl = Math.max(0, Math.min(nl, window.innerWidth - $popup.outerWidth()));
         nt = Math.max(0, Math.min(nt, window.innerHeight - $popup.outerHeight()));
-        $popup.css({ left: nl + 'px', top: nt + 'px' });
-    });
+        pendingLeft = nl;
+        pendingTop = nt;
 
-    $(window).on('mouseup', () => { 
+        if (!rafId) {
+            rafId = requestAnimationFrame(() => {
+                popupEl.style.left = pendingLeft + 'px';
+                popupEl.style.top = pendingTop + 'px';
+                rafId = null;
+            });
+        }
+    };
+
+    const onMouseUp = () => {
         if (isDragging) {
-            isDragging = false; 
-            $header.css('cursor', 'move'); 
+            isDragging = false;
+            $header.css('cursor', 'move');
+            popupEl.style.willChange = 'auto';
+            if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
             saveDimensions($popup);
         }
-    });
+    };
+
+    window.addEventListener('mousemove', onMouseMove, { passive: true });
+    window.addEventListener('mouseup', onMouseUp);
 }
 /**
  * 리사이징 로직 (PC 전용)
@@ -992,6 +1023,9 @@ function setupDraggable($popup, $header) {
 function setupResizable($popup, $handle) {
     let isResizing = false;
     let startW, startH, startX, startY;
+    let rafId = null;
+    let pendingW, pendingH;
+    const popupEl = $popup[0];
 
     $handle.on('mousedown', (e) => {
         if (isMobile()) return;
@@ -999,24 +1033,39 @@ function setupResizable($popup, $handle) {
         startX = e.clientX; startY = e.clientY;
         startW = $popup.outerWidth();
         startH = $popup.outerHeight();
+        pendingW = startW; pendingH = startH;
+        popupEl.style.willChange = 'width, height';
         e.preventDefault();
         e.stopPropagation();
     });
 
-    $(window).on('mousemove', (e) => {
+    const onMouseMove = (e) => {
         if (!isResizing) return;
         const nw = startW + (e.clientX - startX);
         const nh = startH + (e.clientY - startY);
-        if (nw > 400) $popup.css('width', nw + 'px');
-        if (nh > 500) $popup.css('height', nh + 'px');
-    });
+        if (nw > 400) pendingW = nw;
+        if (nh > 500) pendingH = nh;
 
-    $(window).on('mouseup', () => { 
+        if (!rafId) {
+            rafId = requestAnimationFrame(() => {
+                popupEl.style.width = pendingW + 'px';
+                popupEl.style.height = pendingH + 'px';
+                rafId = null;
+            });
+        }
+    };
+
+    const onMouseUp = () => {
         if (isResizing) {
-            isResizing = false; 
+            isResizing = false;
+            popupEl.style.willChange = 'auto';
+            if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
             saveDimensions($popup);
         }
-    });
+    };
+
+    window.addEventListener('mousemove', onMouseMove, { passive: true });
+    window.addEventListener('mouseup', onMouseUp);
 }
 async function openCleanerPopup(mesId) {
     ensurePopupExists();
