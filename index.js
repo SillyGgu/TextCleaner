@@ -485,7 +485,8 @@ function ensurePopupExists() {
             <div class="tc-tab active" data-mode="original">원본 메시지 수정</div>
             <div class="tc-tab" data-mode="llm_manual">LLM 번역 관리</div> 
             <div class="tc-tab" data-mode="prompts" id="tc-tab-prompts">JSON 수정</div>
-            <button id="tc-delete-reasoning-btn" class="tc-delete-reasoning-btn" title="현재 메시지의 추론(Reasoning) 블록을 즉시 삭제">🗑️ 추론 삭제</button>
+            <button id="tc-refresh-btn" class="tc-tab-action-btn" title="현재 메시지 내용으로 다시 불러오기">↺</button>
+            <button id="tc-delete-reasoning-btn" class="tc-tab-action-btn tc-tab-action-btn--danger" title="현재 메시지의 추론(Reasoning) 블록을 즉시 삭제">🗑️</button>
         </div>
         <div class="tc-popup-body">
             <!-- 일반 편집 모드 영역 (LLM 모드 공유) -->
@@ -623,6 +624,56 @@ function ensurePopupExists() {
         toastr.success(`프리셋 "${name.trim()}"이 저장되었습니다.`);
     });
     
+    $('#tc-refresh-btn').on('click', async () => {
+        if (currentMesId === null) {
+            toastr.warning("메시지가 선택되지 않았습니다.");
+            return;
+        }
+
+        const context = getContext();
+        const message = context.chat[currentMesId];
+        if (!message) {
+            toastr.warning("메시지를 찾을 수 없습니다.");
+            return;
+        }
+
+        const activeMode = $('.tc-mode-tabs .tc-tab.active').attr('data-mode');
+
+        if (activeMode === 'llm_manual') {
+            try {
+                const originalText = message.mes;
+                const dbTranslation = await getTranslationFromDB(originalText);
+                const content = dbTranslation || message.extra?.display_text || '';
+                $('#tc-original-view').val(content);
+                $('#tc-modified-view').val(content);
+
+                if (isCompareMode) {
+                    const diff = getDiffHtml(content, content);
+                    $('#tc-original-preview').html(diff.oldHtml);
+                    $('#tc-modified-preview').html(diff.newHtml);
+                }
+
+                toastr.info('번역 데이터를 다시 불러왔습니다.');
+            } catch (e) {
+                toastr.error('DB 조회 실패: ' + e.message);
+            }
+        } else if (activeMode === 'original') {
+            const content = message.mes;
+            $('#tc-original-view').val(content);
+            $('#tc-modified-view').val(content);
+
+            if (isCompareMode) {
+                const diff = getDiffHtml(content, content);
+                $('#tc-original-preview').html(diff.oldHtml);
+                $('#tc-modified-preview').html(diff.newHtml);
+            }
+
+            toastr.info('원본 메시지를 다시 불러왔습니다.');
+        } else {
+            toastr.info('JSON 탭은 새로고침이 필요하지 않습니다.');
+        }
+    });
+	
     $('#tc-delete-reasoning-btn').on('click', async () => {
         if (currentMesId === null) {
             toastr.warning("메시지가 선택되지 않았습니다.");

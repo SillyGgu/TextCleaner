@@ -979,9 +979,8 @@
     line-height: 1.8;
 }
 
-/* ── 추론 삭제 버튼 (탭바 우측) ─────────────────────── */
-.tc-delete-reasoning-btn {
-    margin-left: auto;
+/* ── 탭바 우측 액션 버튼 공통 ───────────────────────── */
+.tc-tab-action-btn {
     flex-shrink: 0;
     align-self: center;
     white-space: nowrap;
@@ -989,8 +988,8 @@
     color: var(--tc-text-sub) !important;
     border: 1px solid var(--tc-border) !important;
     border-radius: 6px;
-    padding: 3px 10px !important;
-    font-size: 0.78rem;
+    padding: 2px 6px !important;
+    font-size: 0.82rem;
     font-weight: 600;
     cursor: pointer;
     transition: background 0.2s, color 0.2s, border-color 0.2s;
@@ -998,7 +997,25 @@
     letter-spacing: -0.01em;
     font-family: inherit;
 }
-.tc-delete-reasoning-btn:hover {
+.tc-tab-action-btn:hover {
+    background: var(--tc-bg-group) !important;
+    color: var(--tc-text-main) !important;
+    border-color: var(--tc-accent) !important;
+}
+
+/* 새로고침 버튼 — margin-left:auto 로 탭들과 우측 분리 */
+#tc-refresh-btn {
+    margin-left: auto;
+    font-size: 0.82rem;
+    padding: 2px 9px !important;
+}
+#tc-refresh-btn:hover {
+    color: var(--tc-accent) !important;
+    border-color: var(--tc-accent) !important;
+}
+
+/* 추론 삭제 버튼 — 호버 시만 붉게 */
+.tc-tab-action-btn--danger:hover {
     background: rgba(255, 95, 86, 0.1) !important;
     color: #ff5f56 !important;
     border-color: rgba(255, 95, 86, 0.5) !important;
