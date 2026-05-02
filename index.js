@@ -485,6 +485,7 @@ function ensurePopupExists() {
             <div class="tc-tab active" data-mode="original">원본 메시지 수정</div>
             <div class="tc-tab" data-mode="llm_manual">LLM 번역 관리</div> 
             <div class="tc-tab" data-mode="prompts" id="tc-tab-prompts">JSON 수정</div>
+            <button id="tc-delete-reasoning-btn" class="tc-delete-reasoning-btn" title="현재 메시지의 추론(Reasoning) 블록을 즉시 삭제">🗑️ 추론 삭제</button>
         </div>
         <div class="tc-popup-body">
             <!-- 일반 편집 모드 영역 (LLM 모드 공유) -->
@@ -622,6 +623,35 @@ function ensurePopupExists() {
         toastr.success(`프리셋 "${name.trim()}"이 저장되었습니다.`);
     });
     
+    $('#tc-delete-reasoning-btn').on('click', async () => {
+        if (currentMesId === null) {
+            toastr.warning("메시지가 선택되지 않았습니다.");
+            return;
+        }
+
+        const context = getContext();
+        const message = context.chat[currentMesId];
+        if (!message) {
+            toastr.warning("메시지를 찾을 수 없습니다.");
+            return;
+        }
+
+        if (!message.extra?.reasoning || message.extra.reasoning.trim() === '') {
+            toastr.warning("삭제할 추론 블록이 없습니다.");
+            return;
+        }
+
+        message.extra.reasoning = '';
+        message.extra.reasoning_duration = undefined;
+
+        updateMessageBlock(currentMesId, message);
+        await saveChat();
+        await eventSource.emit(event_types.MESSAGE_UPDATED, currentMesId);
+        await eventSource.emit(event_types.MESSAGE_RENDERED, currentMesId);
+
+        toastr.success("추론 블록이 삭제되었습니다.");
+    });
+	
     $('#tc-close-x, #tc-cancel-btn').on('click', () => {
         $('#tc-popup-window').hide();
         $('#tc-prompt-json-view').val('');

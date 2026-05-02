@@ -978,3 +978,28 @@
     padding: 20px;
     line-height: 1.8;
 }
+
+/* ── 추론 삭제 버튼 (탭바 우측) ─────────────────────── */
+.tc-delete-reasoning-btn {
+    margin-left: auto;
+    flex-shrink: 0;
+    align-self: center;
+    white-space: nowrap;
+    background: transparent !important;
+    color: var(--tc-text-sub) !important;
+    border: 1px solid var(--tc-border) !important;
+    border-radius: 6px;
+    padding: 3px 10px !important;
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s, border-color 0.2s;
+    line-height: 1.6;
+    letter-spacing: -0.01em;
+    font-family: inherit;
+}
+.tc-delete-reasoning-btn:hover {
+    background: rgba(255, 95, 86, 0.1) !important;
+    color: #ff5f56 !important;
+    border-color: rgba(255, 95, 86, 0.5) !important;
+}
