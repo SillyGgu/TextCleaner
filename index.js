@@ -470,7 +470,8 @@ function ensurePopupExists() {
     <div id="tc-popup-window">
         <div class="tc-popup-header" id="tc-drag-handle">
             <span class="tc-popup-header-title">🧹 Text Cleaner</span>
-            <div style="display: flex; align-items: center;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <button id="tc-scroll-nav-toggle" class="tc-scroll-nav-toggle-btn" title="위아래 이동 버튼 ON/OFF">⇅</button>
                 <div class="tc-theme-selector">
                     <div class="tc-theme-dot active" data-theme="dark" style="background:#212121;" title="Dark"></div>
                     <div class="tc-theme-dot" data-theme="lavender" style="background:#d5c9dd;" title="Lavender"></div>
@@ -483,10 +484,13 @@ function ensurePopupExists() {
         </div>
         <div class="tc-mode-tabs">
             <div class="tc-tab active" data-mode="original">원본 메시지 수정</div>
-            <div class="tc-tab" data-mode="llm_manual">LLM 번역 관리</div> 
+            <div class="tc-tab" data-mode="llm_manual">LLM 번역 관리</div>
             <div class="tc-tab" data-mode="prompts" id="tc-tab-prompts">JSON 수정</div>
-            <button id="tc-refresh-btn" class="tc-tab-action-btn" title="현재 메시지 내용으로 다시 불러오기">↺</button>
-            <button id="tc-delete-reasoning-btn" class="tc-tab-action-btn tc-tab-action-btn--danger" title="현재 메시지의 추론(Reasoning) 블록을 즉시 삭제">🗑️</button>
+            <div class="tc-tab-action-group">
+                <button id="tc-llm-translate-btn" class="tc-tab-action-btn" title="LLM 번역 (기존)" style="display:none;">🧠</button>
+                <button id="tc-refresh-btn" class="tc-tab-action-btn" title="현재 메시지 내용으로 다시 불러오기">↺</button>
+                <button id="tc-delete-reasoning-btn" class="tc-tab-action-btn tc-tab-action-btn--danger" title="현재 메시지의 추론(Reasoning) 블록을 즉시 삭제">🗑️</button>
+            </div>
         </div>
         <div class="tc-popup-body">
             <!-- 일반 편집 모드 영역 (LLM 모드 공유) -->
@@ -608,6 +612,31 @@ function ensurePopupExists() {
         applyTheme($(this).attr('data-theme'));
     });
 
+    // 위아래 이동 버튼 토글
+    const SCROLL_NAV_KEY = 'tc_scroll_nav_enabled';
+    function applyScrollNavState(enabled) {
+        const $nav = $('#tc-scroll-nav');
+        const $btn = $('#tc-scroll-nav-toggle');
+        if (enabled) {
+            $nav.show();
+            $btn.addClass('active');
+            localStorage.setItem(SCROLL_NAV_KEY, 'true');
+        } else {
+            $nav.hide();
+            $btn.removeClass('active');
+            localStorage.setItem(SCROLL_NAV_KEY, 'false');
+        }
+    }
+    const scrollNavEnabled = localStorage.getItem(SCROLL_NAV_KEY) !== 'false';
+    applyScrollNavState(scrollNavEnabled);
+
+    $('#tc-scroll-nav-toggle').on('click', function(e) {
+        e.stopPropagation();
+        const currentlyEnabled = localStorage.getItem(SCROLL_NAV_KEY) !== 'false';
+        applyScrollNavState(!currentlyEnabled);
+    });
+
+
     $('#tc-add-range-btn').on('click', () => addRangeRow());
     $('#tc-add-replace-btn').on('click', () => addReplaceRow());
     $('#tc-compare-toggle-btn').on('click', toggleCompareMode);
@@ -623,7 +652,13 @@ function ensurePopupExists() {
         savePreset(name.trim(), ranges, replacements);
         toastr.success(`프리셋 "${name.trim()}"이 저장되었습니다.`);
     });
-    
+    $('#tc-llm-translate-btn').on('click', () => {
+        const $mesBlock = $(`.mes[mesid="${currentMesId}"]`);
+        const $target = $mesBlock.find('.mes_legacy_translate');
+        if ($target.length) {
+            $target.trigger('click');
+        }
+    });
     $('#tc-refresh-btn').on('click', async () => {
         if (currentMesId === null) {
             toastr.warning("메시지가 선택되지 않았습니다.");
@@ -1160,6 +1195,14 @@ async function openCleanerPopup(mesId) {
     const latestMesId = $mesBlock.length ? parseInt($mesBlock.attr('mesid')) : mesId;
     currentMesId = latestMesId;
 
+    // 해당 메시지에 LLM 번역 버튼이 있을 때만 팝업 내 버튼 표시
+    const $mesLlmBtn = $mesBlock.find('.mes_legacy_translate');
+    if ($mesLlmBtn.length) {
+        $('#tc-llm-translate-btn').show();
+    } else {
+        $('#tc-llm-translate-btn').hide();
+    }
+
     const context = getContext();
     const message = context.chat[latestMesId];
     if (!message) {
@@ -1257,7 +1300,6 @@ function addCleanerButton($mesBlock) {
         .css({ 'opacity': '0.8', 'margin-left': '5px', 'color': '#4a90e2' })
         .on('click', (e) => {
             e.stopPropagation();
-            // 클릭 시점에 부모 .mes의 현재 mesid를 다시 읽음 (move up/down 대응)
             const currentId = $btn.closest('.mes').attr('mesid');
             openCleanerPopup(currentId !== undefined ? currentId : mesId);
         });
@@ -1295,6 +1337,150 @@ $(document).ready(() => {
         });
     });
     chatObserver.observe(document.getElementById('chat'), { childList: true, subtree: true });
+
+    // 화면 하단 고정 스크롤 네비 버튼
+    const $nav = $(`
+        <div id="tc-scroll-nav">
+            <div class="tc-scroll-nav-buttons">
+                <div id="tc-scroll-up" class="tc-scroll-nav-btn" title="이전 메시지로">
+                    <i class="fa-solid fa-chevron-up"></i>
+                </div>
+                <div id="tc-scroll-down" class="tc-scroll-nav-btn" title="다음 메시지로">
+                    <i class="fa-solid fa-chevron-down"></i>
+                </div>
+            </div>
+            <div id="tc-scroll-handle" class="tc-scroll-handle">
+                <i class="fa-solid fa-grip-lines"></i>
+            </div>
+        </div>
+    `);
+    $('#form_sheld').css('position', 'relative').prepend($nav);
+
+    // 현재 화면에서 가장 많이 보이는 메시지의 mesid 반환
+    function getVisibleMesId() {
+        const $chat = $('#chat');
+        const chatTop = $chat.offset().top;
+        const chatBottom = chatTop + $chat.height();
+        let bestId = null;
+        let bestVisible = 0;
+
+        $('#chat .mes').each(function() {
+            const top = $(this).offset().top;
+            const bottom = top + $(this).outerHeight();
+            const visibleTop = Math.max(top, chatTop);
+            const visibleBottom = Math.min(bottom, chatBottom);
+            const visible = Math.max(0, visibleBottom - visibleTop);
+            if (visible > bestVisible) {
+                bestVisible = visible;
+                bestId = parseInt($(this).attr('mesid'));
+            }
+        });
+        return bestId;
+    }
+
+    // 현재 네비 기준 mesid (클릭할 때마다 직접 추적)
+    let navCurrentId = null;
+
+    // 모바일: 핸들 탭으로 토글
+    let navExpanded = false;
+    $('#tc-scroll-handle').on('click', () => {
+        navExpanded = !navExpanded;
+        $('#tc-scroll-nav').toggleClass('expanded', navExpanded);
+    });
+    $(document).on('click', '.tc-scroll-nav-btn', () => {
+        if (window.innerWidth <= 768) {
+            setTimeout(() => {
+                navExpanded = false;
+                $('#tc-scroll-nav').removeClass('expanded');
+            }, 600);
+        }
+    });
+
+    function getChat() {
+        return document.getElementById('chat');
+    }
+
+    // DOM 순서 기준으로 모든 .mes 요소의 인덱스 배열 반환
+    function getMesElements() {
+        return Array.from(document.querySelectorAll('#chat .mes'));
+    }
+
+    // 현재 스크롤 위치에서 가장 상단에 걸쳐있는 메시지의 DOM 인덱스 반환
+    function getTopVisibleDomIndex(chat, mesEls) {
+        const scrollTop = chat.scrollTop;
+        for (let i = mesEls.length - 1; i >= 0; i--) {
+            if (mesEls[i].offsetTop <= scrollTop + 40) {
+                return i;
+            }
+        }
+        return 0;
+    }
+
+    $('#tc-scroll-up').on('click', () => {
+        const chat = getChat();
+        if (!chat) return;
+        const mesEls = getMesElements();
+        if (!mesEls.length) return;
+
+        if (navCurrentId === null) {
+            // 첫 클릭: 현재 보이는 메시지 상단으로 먼저 이동
+            const visibleIndex = getTopVisibleDomIndex(chat, mesEls);
+            const targetTop = mesEls[visibleIndex].offsetTop - 16;
+            const alreadyAtTop = Math.abs(chat.scrollTop - targetTop) < 40;
+
+            if (alreadyAtTop) {
+                // 이미 상단 근처면 바로 이전 메시지로
+                const targetIndex = Math.max(0, visibleIndex - 1);
+                chat.scrollTo({ top: mesEls[targetIndex].offsetTop - 16, behavior: 'smooth' });
+                navCurrentId = targetIndex;
+            } else {
+                // 현재 메시지 상단으로 먼저
+                chat.scrollTo({ top: targetTop, behavior: 'smooth' });
+                navCurrentId = visibleIndex;
+            }
+            return;
+        }
+
+        const targetIndex = Math.max(0, navCurrentId - 1);
+        chat.scrollTo({ top: mesEls[targetIndex].offsetTop - 16, behavior: 'smooth' });
+        navCurrentId = targetIndex;
+    });
+
+    $('#tc-scroll-down').on('click', () => {
+        const chat = getChat();
+        if (!chat) return;
+        const mesEls = getMesElements();
+        if (!mesEls.length) return;
+
+        if (navCurrentId === null) {
+            navCurrentId = getTopVisibleDomIndex(chat, mesEls);
+        }
+
+        const targetIndex = navCurrentId + 1;
+        if (targetIndex < mesEls.length) {
+            chat.scrollTo({ top: mesEls[targetIndex].offsetTop - 16, behavior: 'smooth' });
+            navCurrentId = targetIndex;
+        } else {
+            // 마지막 메시지에서 한 번 더 → 완전 하단
+            chat.scrollTo({ top: chat.scrollHeight, behavior: 'smooth' });
+        }
+    });
+
+    // 사용자가 직접 스크롤하면 navCurrentId 리셋 (자연스러운 재기준)
+    $('#chat').on('scroll.tcnav', function() {
+        navCurrentId = null;
+    });
+
+    // 채팅 전환 시 리셋
+    eventSource.on(event_types.CHAT_CHANGED, () => {
+        navCurrentId = null;
+        navExpanded = false;
+        $('#tc-scroll-nav').removeClass('expanded');
+        // 채팅 전환 후 새 #chat에 스크롤 리스너 재등록
+        $('#chat').off('scroll.tcnav').on('scroll.tcnav', function() {
+            navCurrentId = null;
+        });
+    });
 });
 
 function openDB() {

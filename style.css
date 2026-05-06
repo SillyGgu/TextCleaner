@@ -157,17 +157,26 @@
     display: flex;
     background: var(--tc-bg-main);
     border-bottom: 1px solid var(--tc-border);
-    padding: 0 20px;
-    gap: 20px;
+    padding: 0 12px;
+    gap: 0;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    align-items: center;
 }
+.tc-mode-tabs::-webkit-scrollbar { display: none; }
+
 .tc-tab {
-    padding: 12px 4px;
+    padding: 10px 10px;
     cursor: pointer;
-    font-size: 0.9rem;
+    font-size: 0.82rem;
     color: var(--tc-text-sub);
     border-bottom: 2px solid transparent;
     transition: 0.2s;
     font-weight: 600;
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 .tc-tab:hover { color: var(--tc-text-main); }
 .tc-tab.active { color: var(--tc-accent); border-bottom-color: var(--tc-accent); }
@@ -590,8 +599,25 @@
         z-index: 9999 !important; 
     }
 
-}
+    .tc-prompt-toolbar .tc-prompt-load-btn {
+        width: 100%;
+        text-align: center;
+    }
 
+    .tc-mode-tabs {
+        padding: 0 8px;
+    }
+
+    .tc-tab {
+        font-size: 0.78rem;
+        padding: 9px 8px;
+    }
+
+    .tc-tab-action-btn {
+        font-size: 0.75rem;
+        padding: 2px 5px !important;
+    }
+}
 /* 프리셋 섹션 — 한 줄 인라인 */
 .tc-preset-section {
     display: flex;
@@ -690,28 +716,19 @@
 
 
 @media screen and (max-width: 768px) {
-    
     #tc-popup-window textarea::-webkit-scrollbar,
-    #tc-popup-window .tc-preview-area::-webkit-scrollbar {
-        width: 12px !important;  
-        height: 12px !important;
-        display: block !important;
-        background: transparent; 
+    #tc-popup-window .tc-preview-area::-webkit-scrollbar,
+    #tc-popup-window *::-webkit-scrollbar {
+        display: none !important;
+        width: 0 !important;
+        height: 0 !important;
     }
 
-    
-    #tc-popup-window textarea::-webkit-scrollbar-thumb,
-    #tc-popup-window .tc-preview-area::-webkit-scrollbar-thumb {
-        background-color: rgba(0, 0, 0, 0.1);
-        border-radius: 6px;
-        border: 2px solid transparent;
-        background-clip: content-box;
-    }
-    
-    
-    #tc-popup-window textarea::-webkit-scrollbar-corner,
-    #tc-popup-window .tc-preview-area::-webkit-scrollbar-corner {
-        background-color: transparent;
+    #tc-popup-window textarea,
+    #tc-popup-window .tc-preview-area,
+    #tc-popup-window * {
+        scrollbar-width: none !important;
+        -ms-overflow-style: none !important;
     }
 }
 
@@ -765,17 +782,24 @@
 /* ── 프롬프트 탭 툴바 ───────────────────────────────── */
 .tc-prompt-toolbar {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 8px;
     flex-shrink: 0;
-    flex-wrap: wrap;
-    padding: 8px 12px;
+    flex-direction: column;
+    padding: 10px 12px;
     background: var(--tc-bg-group);
     border: 1px solid var(--tc-border-light);
     border-radius: 10px;
     row-gap: 6px;
 }
 
+@media screen and (min-width: 769px) {
+    .tc-prompt-toolbar {
+        flex-direction: row;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+}
 .tc-prompt-load-btn {
     background: var(--tc-accent) !important;
     color: white !important;
@@ -797,10 +821,16 @@
 .tc-prompt-tool-groups {
     display: flex;
     gap: 6px;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     flex: 1;
     min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    width: 100%;
+    padding-bottom: 2px;
 }
+.tc-prompt-tool-groups::-webkit-scrollbar { display: none; }
 
 .tc-tool-group {
     display: flex;
@@ -1003,9 +1033,22 @@
     border-color: var(--tc-accent) !important;
 }
 
-/* 새로고침 버튼 — margin-left:auto 로 탭들과 우측 분리 */
-#tc-refresh-btn {
+/* 탭바 우측 버튼 그룹 컨테이너 */
+.tc-tab-action-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     margin-left: auto;
+    padding-right: 4px;
+    flex-shrink: 0;
+}
+
+#tc-llm-translate-btn {
+    margin-left: 0;
+}
+
+#tc-refresh-btn {
+    margin-left: 0;
     font-size: 0.82rem;
     padding: 2px 9px !important;
 }
@@ -1014,9 +1057,139 @@
     border-color: var(--tc-accent) !important;
 }
 
+@media screen and (max-width: 768px) {
+    .tc-tab-action-group {
+        gap: 8px;
+        padding-right: 6px;
+    }
+    .tc-tab-action-btn {
+        min-width: 32px;
+        min-height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 4px 8px !important;
+        font-size: 0.8rem;
+    }
+}
+
 /* 추론 삭제 버튼 — 호버 시만 붉게 */
 .tc-tab-action-btn--danger:hover {
     background: rgba(255, 95, 86, 0.1) !important;
     color: #ff5f56 !important;
     border-color: rgba(255, 95, 86, 0.5) !important;
+}
+
+/* ── 화면 하단 고정 스크롤 네비 ───────────────────── */
+#tc-scroll-nav {
+    position: absolute;
+    bottom: 100%;
+    left: 0;
+    right: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+    z-index: 2000;
+    pointer-events: none;
+    gap: 0;
+}
+
+.tc-scroll-handle {
+    pointer-events: all;
+    width: 80px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--SmartThemeBodyColor, rgba(255,255,255,0.3));
+    font-size: 10px;
+    opacity: 0.4;
+    transition: opacity 0.2s;
+}
+
+.tc-scroll-nav-buttons {
+    pointer-events: none;
+    display: flex;
+    flex-direction: row;
+    gap: 10px;
+    padding: 8px 16px;
+    background: var(--SmartThemeBlurTintColor, rgba(20,20,20,0.82));
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.12));
+    border-radius: 20px;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    opacity: 0;
+    transform: translateY(6px);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    /* 버튼과 핸들 사이 완전히 붙임 */
+    margin-bottom: 0;
+}
+
+/* PC: #tc-scroll-nav 전체 hover → 버튼 표시 */
+@media (hover: hover) {
+    #tc-scroll-nav:hover .tc-scroll-nav-buttons {
+        pointer-events: all;
+        opacity: 1;
+        transform: translateY(0);
+    }
+    #tc-scroll-nav:hover .tc-scroll-handle {
+        opacity: 0.8;
+    }
+}
+
+/* 모바일: expanded 클래스로 토글 */
+#tc-scroll-nav.expanded .tc-scroll-nav-buttons {
+    pointer-events: all;
+    opacity: 1;
+    transform: translateY(0);
+}
+#tc-scroll-nav.expanded .tc-scroll-handle {
+    opacity: 0.8;
+}
+
+.tc-scroll-nav-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: transparent;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.15));
+    color: var(--SmartThemeBodyColor, rgba(255,255,255,0.55));
+    font-size: 13px;
+    cursor: pointer;
+    transition: color 0.2s ease, transform 0.15s ease;
+}
+
+.tc-scroll-nav-btn:hover {
+    color: var(--SmartThemeQuoteColor, #4a90e2);
+    transform: scale(1.1);
+}
+
+/* ── 위아래 이동 버튼 토글 (헤더) ────────────────────── */
+.tc-scroll-nav-toggle-btn {
+    background: transparent !important;
+    color: var(--tc-text-sub) !important;
+    border: 1px solid var(--tc-border) !important;
+    border-radius: 6px;
+    padding: 3px 7px !important;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s, border-color 0.2s;
+    line-height: 1.4;
+    font-family: inherit;
+    flex-shrink: 0;
+}
+.tc-scroll-nav-toggle-btn:hover {
+    background: var(--tc-bg-group) !important;
+    color: var(--tc-text-main) !important;
+    border-color: var(--tc-accent) !important;
+}
+.tc-scroll-nav-toggle-btn.active {
+    background: var(--tc-accent) !important;
+    color: white !important;
+    border-color: var(--tc-accent) !important;
 }
