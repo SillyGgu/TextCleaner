@@ -560,7 +560,7 @@
     }
 
     .tc-input-group, .tc-action-buttons, .tc-history-tags {
-        margin-bottom: 0;
+        margin-bottom: 7px;
     }
     .tc-action-buttons {
         margin: 5px 0 15px 0;
