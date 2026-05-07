@@ -564,7 +564,14 @@ function ensurePopupExists() {
         </div>
         <div class="tc-popup-footer">
             <button id="tc-cancel-btn" class="tc-footer-btn tc-btn-cancel">취소</button>
-            <button id="tc-apply-btn" class="tc-footer-btn tc-btn-apply">메시지에 적용</button>
+            <div class="tc-apply-group">
+                <button id="tc-apply-btn" class="tc-footer-btn tc-btn-apply">메시지에 적용</button>
+                <button id="tc-apply-switch-btn" class="tc-footer-btn tc-btn-apply-switch" title="적용 후 탭 전환">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="3,2 7,8 3,14"/>
+                    </svg>
+                </button>
+            </div>
         </div>
         <div id="tc-resize-handle" class="tc-resizer"></div>
 
@@ -885,6 +892,70 @@ function ensurePopupExists() {
         $('#tc-popup-window').hide();
         $('#tc-prompt-json-view').val('');
         loadedFileName = "preset.json";
+    });
+
+    // 적용 후 탭 전환 버튼 (창 안 닫고 탭 이동)
+    $('#tc-apply-switch-btn').on('click', async () => {
+        const activeMode = $('.tc-mode-tabs .tc-tab.active').attr('data-mode');
+
+        // prompts 탭에서는 동작 안 함
+        if (activeMode === 'prompts') {
+            toastr.info("JSON 탭에서는 전환 버튼을 사용할 수 없습니다.");
+            return;
+        }
+
+        if (currentMesId === null) return;
+
+        // 히스토리 저장
+        $('.tc-range-row').each(function() {
+            const s = $(this).find('.tc-start-tag').val();
+            const e = $(this).find('.tc-end-tag').val();
+            if (s && e) saveToHistory('range', { start: s, end: e });
+        });
+        $('.tc-replace-row').each(function() {
+            const f = $(this).find('.tc-find-word').val();
+            const r = $(this).find('.tc-replace-word').val();
+            if (f) saveToHistory('replace', { find: f, replace: r });
+        });
+
+        const finalContent = $('#tc-modified-view').val();
+        const context = getContext();
+        const message = context.chat[currentMesId];
+
+        if (activeMode === 'llm_manual') {
+            if (!finalContent.trim()) {
+                toastr.warning("저장할 번역 내용이 없습니다.");
+                return;
+            }
+            try {
+                const originalText = message.mes;
+                const existing = await getTranslationFromDB(originalText);
+                if (existing) {
+                    await updateTranslationByOriginalText(originalText, finalContent);
+                    toastr.success("DB 데이터가 업데이트되었습니다.");
+                } else {
+                    await addTranslationToDB(originalText, finalContent);
+                    toastr.success("DB에 번역이 등록되었습니다.");
+                }
+                if (!message.extra) message.extra = {};
+                message.extra.display_text = finalContent;
+            } catch (e) {
+                toastr.error("DB 저장 실패: " + e.message);
+                return;
+            }
+        } else {
+            message.mes = finalContent;
+            toastr.success("원본 메시지가 수정되었습니다.");
+        }
+
+        updateMessageBlock(currentMesId, message);
+        await saveChat();
+        await eventSource.emit(event_types.MESSAGE_UPDATED, currentMesId);
+        await eventSource.emit(event_types.MESSAGE_RENDERED, currentMesId);
+
+        // 창 유지 + 반대 탭으로 전환
+        const nextMode = activeMode === 'llm_manual' ? 'original' : 'llm_manual';
+        $(`.tc-tab[data-mode="${nextMode}"]`).trigger('click');
     });
     
     $('#tc-import-json-btn').on('click', () => $('#tc-json-file-input').click());

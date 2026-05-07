@@ -430,9 +430,17 @@
     background: var(--tc-bg-main) !important;
     display: flex;
     justify-content: flex-end;
+    align-items: stretch;
     gap: 12px;
     border-top: 1px solid var(--tc-border-light);
     flex-shrink: 0;
+}
+
+/* 메시지에 적용 + 전환 버튼을 붙여서 묶는 그룹 */
+.tc-apply-group {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
 }
 
 .tc-footer-btn {
@@ -444,11 +452,54 @@
     font-size: 0.9rem;
     transition: 0.2s;
 }
-.tc-btn-apply { background-color: var(--tc-accent) !important; color: white !important; box-shadow: 0 4px 10px rgba(74, 144, 226, 0.3); }
+
+.tc-btn-apply {
+    background-color: var(--tc-accent) !important;
+    color: white !important;
+    box-shadow: 0 4px 10px rgba(74, 144, 226, 0.3);
+    border-radius: 8px 0 0 8px !important;
+}
 .tc-btn-apply:hover { background-color: var(--tc-accent-hover) !important; transform: translateY(-1px); }
+
+/* 전환 슬림 버튼 */
+.tc-btn-apply-switch {
+    background-color: var(--tc-accent) !important;
+    color: white !important;
+    box-shadow: 0 4px 10px rgba(74, 144, 226, 0.3);
+    border-left: 1px solid rgba(255,255,255,0.25) !important;
+    border-radius: 0 8px 8px 0 !important;
+    padding: 0 7px !important;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    flex-shrink: 0;
+}
+.tc-btn-apply-switch svg {
+    width: 10px;
+    height: 18px;
+    flex-shrink: 0;
+    display: block;
+}
+.tc-btn-apply-switch:hover {
+    background-color: var(--tc-accent-hover) !important;
+    transform: translateY(-1px);
+}
 
 .tc-btn-cancel { background-color: transparent !important; color: var(--tc-text-sub) !important; border: 1px solid transparent !important; }
 .tc-btn-cancel:hover { color: var(--tc-text-main) !important; background: var(--tc-bg-group) !important; }
+
+/* 모바일: 전환 버튼 터치 영역 확보 */
+@media screen and (max-width: 768px) {
+    .tc-btn-apply-switch {
+        width: 30px;
+        padding: 0 9px !important;
+    }
+    .tc-btn-apply-switch svg {
+        width: 10px;
+        height: 18px;
+    }
+}
 
 
 .tc-resizer {
@@ -582,8 +633,9 @@
     }
 
     .tc-popup-footer {
-        padding: 8px 12px; 
+        padding: 8px 12px;
         flex-shrink: 0;
+        align-items: stretch;
     }
 
     .tc-tag-remove {
