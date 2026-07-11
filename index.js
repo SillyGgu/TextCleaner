@@ -450,15 +450,28 @@ function toggleCompareMode() {
  * 텍스트 파일 다운로드 헬퍼 함수
  */
 function downloadTextFile(content, filename) {
-    const blob = new Blob([content], { type: 'text/plain' });
+    const isJson = filename.toLowerCase().endsWith('.json');
+    const mimeType = isJson
+        ? 'application/json;charset=utf-8'
+        : 'text/plain;charset=utf-8';
+
+    const output = isJson && !content.startsWith('\uFEFF')
+        ? '\uFEFF' + content
+        : content;
+
+    const blob = new Blob([output], { type: mimeType });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
+
     a.href = url;
     a.download = filename;
     document.body.appendChild(a);
     a.click();
-    window.URL.revokeObjectURL(url);
-    document.body.removeChild(a);
+
+    setTimeout(() => {
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+    }, 0);
 }
 /**
  * 팝업 생성
