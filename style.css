@@ -1245,3 +1245,8 @@
     color: white !important;
     border-color: var(--tc-accent) !important;
 }
+
+#tc-popup-window button:disabled {
+    cursor: progress !important;
+    opacity: 0.65;
+}

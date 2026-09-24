@@ -1,5 +1,5 @@
 import { getContext } from '../../../extensions.js';
-import { updateMessageBlock, saveChat, eventSource, event_types } from '../../../../script.js';
+import { updateMessageBlock, saveChatConditional, eventSource, event_types } from '../../../../script.js';
 
 const extensionName = "TextCleaner";
 const extensionFolderPath = `/scripts/extensions/third-party/${extensionName}`;
@@ -10,6 +10,7 @@ const STORE_NAME = 'translations';
 let currentMesId = null;
 let isCompareMode = false;
 let loadedFileName = "preset.json";
+let isApplying = false;
 
 // 대조 모드 스크롤 동기화 핸들러 (리스너 누적 방지용 고정 참조)
 const syncScrollHandler = (e) => {
@@ -127,17 +128,17 @@ function getDiffHtml(oldText, newText) {
 
         while (i >= 0 || j >= 0) {
             if (i >= 0 && j >= 0 && aTokens[i] === bTokens[j]) {
-                result.unshift({ type: 'common', val: aTokens[i] });
+                result.push({ type: 'common', val: aTokens[i] });
                 i--; j--;
             } else if (j >= 0 && (i < 0 || (table[i] && table[i][j] >= (i > 0 ? table[i - 1][j + 1] : 0)))) {
-                result.unshift({ type: 'added', val: bTokens[j] });
+                result.push({ type: 'added', val: bTokens[j] });
                 j--;
             } else {
-                result.unshift({ type: 'removed', val: aTokens[i] });
+                result.push({ type: 'removed', val: aTokens[i] });
                 i--;
             }
         }
-        return result;
+        return result.reverse();
     }
 
     function mergeSame(diffs) {
@@ -168,24 +169,27 @@ function getDiffHtml(oldText, newText) {
         return { oldHtml, newHtml };
     }
 
-    // 텍스트가 너무 길면 라인 단위 diff만 수행 (성능)
-    const MAX_TOKENS = 4000;
+    // LCS는 두 입력 길이의 곱만큼 시간과 메모리를 사용한다.
+    const MAX_DIFF_CELLS = 150000;
     const aTokens = tokenize(oldText);
     const bTokens = tokenize(newText);
 
     let diffs;
-    if (aTokens.length > MAX_TOKENS || bTokens.length > MAX_TOKENS) {
-        // 라인 단위로만 diff
-        const aLines = oldText.split('\n');
-        const bLines = newText.split('\n');
-        diffs = buildDiff(aLines, bLines).map(d => ({
-            type: d.type,
-            val: d.val + '\n'
-        }));
-        // 마지막 개행 정리
-        if (diffs.length && diffs[diffs.length - 1].val.endsWith('\n\n')) {
-            diffs[diffs.length - 1].val = diffs[diffs.length - 1].val.slice(0, -1);
-        }
+    if (aTokens.length * bTokens.length > MAX_DIFF_CELLS) {
+        // 긴 메시지는 공통 접두/접미 부분을 보존하고 변경된 구간만 표시한다.
+        // 줄 단위 LCS도 긴 채팅에서는 같은 정지 현상을 일으킬 수 있다.
+        let prefix = 0;
+        const minLength = Math.min(oldText.length, newText.length);
+        while (prefix < minLength && oldText[prefix] === newText[prefix]) prefix++;
+        let suffix = 0;
+        while (suffix < minLength - prefix && oldText[oldText.length - 1 - suffix] === newText[newText.length - 1 - suffix]) suffix++;
+        diffs = [];
+        if (prefix) diffs.push({ type: 'common', val: oldText.slice(0, prefix) });
+        const removed = oldText.slice(prefix, oldText.length - suffix);
+        const added = newText.slice(prefix, newText.length - suffix);
+        if (removed) diffs.push({ type: 'removed', val: removed });
+        if (added) diffs.push({ type: 'added', val: added });
+        if (suffix) diffs.push({ type: 'common', val: oldText.slice(oldText.length - suffix) });
     } else {
         diffs = buildDiff(aTokens, bTokens);
     }
@@ -204,7 +208,17 @@ function getCurrentHistoryKey() {
 
 function getHistory(overrideKey) {
     const storageKey = overrideKey || getCurrentHistoryKey();
-    return JSON.parse(localStorage.getItem(storageKey) || "[]");
+    return readStoredArray(storageKey);
+}
+
+function readStoredArray(key) {
+    try {
+        const value = JSON.parse(localStorage.getItem(key) || '[]');
+        return Array.isArray(value) ? value : [];
+    } catch (error) {
+        console.warn(`[TextCleaner] 저장된 설정을 읽지 못했습니다: ${key}`, error);
+        return [];
+    }
 }
 
 function saveToHistory(type, data) {
@@ -221,7 +235,7 @@ function saveToHistory(type, data) {
  * 프리셋 관리
  */
 function getPresets() {
-    return JSON.parse(localStorage.getItem(PRESET_KEY) || "[]");
+    return readStoredArray(PRESET_KEY);
 }
 
 function savePreset(name, ranges, replacements) {
@@ -570,7 +584,6 @@ function ensurePopupExists() {
                     </div>
                     <input type="file" id="tc-json-file-input" style="display:none;" accept=".json">
                     <input type="file" id="tc-names-file-input" style="display:none;" accept=".txt">
-                    <input type="file" id="tc-images-file-input" style="display:none;" accept=".txt">
                 </div>
                 <textarea id="tc-prompt-json-view" class="tc-text-area" style="flex:1; font-family:monospace; font-size:12px; height:100%; white-space: pre;" placeholder="[📂 JSON 불러오기] 버튼을 눌러 파일을 선택하세요."></textarea>
             </div>
@@ -751,7 +764,7 @@ function ensurePopupExists() {
         message.extra.reasoning_duration = undefined;
 
         updateMessageBlock(currentMesId, message);
-        await saveChat();
+        await saveChatConditional();
         await eventSource.emit(event_types.MESSAGE_UPDATED, currentMesId);
         await eventSource.emit(event_types.MESSAGE_RENDERED, currentMesId);
 
@@ -829,6 +842,7 @@ function ensurePopupExists() {
 
     // 적용 버튼 이벤트
     $('#tc-apply-btn').on('click', async () => {
+        if (isApplying) return;
         const activeMode = $('.tc-mode-tabs .tc-tab.active').attr('data-mode');
 
         if (activeMode === 'prompts') {
@@ -847,7 +861,29 @@ function ensurePopupExists() {
             return; 
         }
 
-        if (currentMesId === null) return;
+        if (currentMesId === null) {
+            toastr.error("메시지가 선택되지 않았습니다.");
+            return;
+        }
+
+        const $applyButton = $('#tc-apply-btn');
+        const originalLabel = $applyButton.text();
+        isApplying = true;
+        $applyButton.prop('disabled', true).text('적용 중…');
+        $('#tc-apply-switch-btn').prop('disabled', true);
+        // 다음 프레임에 처리 상태를 먼저 그린 뒤 저장을 시작한다.
+        await new Promise(resolve => {
+            let settled = false;
+            const finish = () => {
+                if (settled) return;
+                settled = true;
+                resolve();
+            };
+            requestAnimationFrame(() => setTimeout(finish, 0));
+            // 백그라운드 탭에서는 rAF가 멈출 수 있다.
+            setTimeout(finish, 100);
+        });
+        try {
 
         // 히스토리 저장
         $('.tc-range-row').each(function() {
@@ -864,6 +900,7 @@ function ensurePopupExists() {
         const finalContent = $('#tc-modified-view').val();
         const context = getContext();
         const message = context.chat[currentMesId];
+        if (!message) throw new Error('선택한 메시지를 찾을 수 없습니다.');
 
         // LLM 번역 관리 저장
         if (activeMode === 'llm_manual') {
@@ -877,10 +914,8 @@ function ensurePopupExists() {
                 
                 if (existing) {
                     await updateTranslationByOriginalText(originalText, finalContent);
-                    toastr.success("DB 데이터가 업데이트되었습니다.");
                 } else {
                     await addTranslationToDB(originalText, finalContent);
-                    toastr.success("DB에 번역이 등록되었습니다.");
                 }
 
                 if (!message.extra) message.extra = {};
@@ -894,21 +929,36 @@ function ensurePopupExists() {
         // 원본 메시지 저장
         else {
             message.mes = finalContent;
-            toastr.success("원본 메시지가 수정되었습니다.");
         }
         
         updateMessageBlock(currentMesId, message);
-        await saveChat();
-        await eventSource.emit(event_types.MESSAGE_UPDATED, currentMesId);
-        await eventSource.emit(event_types.MESSAGE_RENDERED, currentMesId);
-
+        await saveChatConditional();
         $('#tc-popup-window').hide();
         $('#tc-prompt-json-view').val('');
         loadedFileName = "preset.json";
+        toastr.success(activeMode === 'llm_manual' ? '번역이 저장되었습니다.' : '메시지가 저장되었습니다.');
+        const savedMesId = currentMesId;
+        setTimeout(async () => {
+            try {
+                await eventSource.emit(event_types.MESSAGE_UPDATED, savedMesId);
+                await eventSource.emit(event_types.MESSAGE_RENDERED, savedMesId);
+            } catch (error) {
+                console.error('[TextCleaner] 메시지 갱신 이벤트 실패', error);
+            }
+        }, 0);
+        } catch (error) {
+            console.error('[TextCleaner] 메시지 적용 실패', error);
+            toastr.error(`메시지 적용 실패: ${error.message}`);
+        } finally {
+            isApplying = false;
+            $applyButton.prop('disabled', false).text(originalLabel);
+            $('#tc-apply-switch-btn').prop('disabled', false);
+        }
     });
 
     // 적용 후 탭 전환 버튼 (창 안 닫고 탭 이동)
     $('#tc-apply-switch-btn').on('click', async () => {
+        if (isApplying) return;
         const activeMode = $('.tc-mode-tabs .tc-tab.active').attr('data-mode');
 
         // prompts 탭에서는 동작 안 함
@@ -962,7 +1012,7 @@ function ensurePopupExists() {
         }
 
         updateMessageBlock(currentMesId, message);
-        await saveChat();
+        await saveChatConditional();
         await eventSource.emit(event_types.MESSAGE_UPDATED, currentMesId);
         await eventSource.emit(event_types.MESSAGE_RENDERED, currentMesId);
 
@@ -1024,7 +1074,10 @@ function ensurePopupExists() {
             return;
         }
         urls.forEach((url, i) => {
-            $newList.append(`<div class="tc-icb-row"><span class="tc-icb-idx">${i + 1}</span><span class="tc-icb-url" title="${url}">${url}</span></div>`);
+            const $row = $('<div>').addClass('tc-icb-row');
+            $row.append($('<span>').addClass('tc-icb-idx').text(i + 1));
+            $row.append($('<span>').addClass('tc-icb-url').attr('title', url).text(url));
+            $newList.append($row);
         });
         const oldCount = parseInt($('#tc-icb-old-count').text().replace(/\D/g, '')) || 0;
         $('#tc-icb-new-count').text(`(${urls.length}개)`);
@@ -1044,7 +1097,10 @@ function ensurePopupExists() {
         const $oldList = $('#tc-icb-old-list');
         $oldList.empty();
         oldUrls.forEach((url, i) => {
-            $oldList.append(`<div class="tc-icb-row"><span class="tc-icb-idx">${i + 1}</span><span class="tc-icb-url" title="${url}">${url}</span></div>`);
+            const $row = $('<div>').addClass('tc-icb-row');
+            $row.append($('<span>').addClass('tc-icb-idx').text(i + 1));
+            $row.append($('<span>').addClass('tc-icb-url').attr('title', url).text(url));
+            $oldList.append($row);
         });
         $('#tc-icb-old-count').text(`(${oldUrls.length}개)`);
         tcNewUrls = [];
@@ -1174,7 +1230,7 @@ function setupDraggable($popup, $header) {
 
     $header.on('mousedown', (e) => {
         if (isMobile()) return;
-        if (e.target.closest('.tc-popup-close-btn') || e.target.closest('.tc-btn-add-row') || e.target.closest('.tc-theme-dot')) return;
+        if (e.target.closest('button, input, select, textarea, a, .tc-theme-dot, .tc-popup-close-btn')) return;
         isDragging = true;
         startX = e.clientX; startY = e.clientY;
         const pos = $popup.position();
@@ -1290,16 +1346,11 @@ async function openCleanerPopup(mesId) {
     const context = getContext();
     const message = context.chat[latestMesId];
     if (!message) {
-        // 혹시 chat 배열 마지막 메시지로 fallback
-        const lastIndex = context.chat.length - 1;
-        if (lastIndex >= 0) {
-            currentMesId = lastIndex;
-        } else {
-            toastr.error("메시지를 찾을 수 없습니다.");
-            return;
-        }
+        currentMesId = null;
+        toastr.error("선택한 메시지를 찾을 수 없습니다.");
+        return;
     }
-    const content = (context.chat[currentMesId] || {}).mes || '';
+    const content = message.mes || '';
     
     
     $('.tc-tab').removeClass('active');
@@ -1353,8 +1404,9 @@ async function openCleanerPopup(mesId) {
         $('#tc-resize-handle').hide();
     } else {
         const savedDim = localStorage.getItem(DIMENSIONS_KEY);
-        if (savedDim) {
-            const dim = JSON.parse(savedDim);
+        let dim = null;
+        try { dim = savedDim ? JSON.parse(savedDim) : null; } catch { /* 기본 위치 사용 */ }
+        if (dim && dim.top && dim.left && dim.width && dim.height) {
             $popup.css({
                 display: 'flex',
                 top: dim.top,
@@ -1377,6 +1429,8 @@ function addCleanerButton($mesBlock) {
     if ($mesBlock.find('.tc-cleaner-btn').length) return;
     const mesId = $mesBlock.attr('mesid');
     if (mesId === undefined) return;
+    const $buttons = $mesBlock.find('.extraMesButtons').first();
+    if (!$buttons.length) return;
 
     const $btn = $('<div>')
         .addClass('mes_button tc-cleaner-btn fa-solid fa-broom interactable')
@@ -1387,7 +1441,7 @@ function addCleanerButton($mesBlock) {
             const currentId = $btn.closest('.mes').attr('mesid');
             openCleanerPopup(currentId !== undefined ? currentId : mesId);
         });
-    $mesBlock.find('.extraMesButtons').append($btn);
+    $buttons.append($btn);
 }
 
 $(document).ready(() => {
@@ -1412,15 +1466,22 @@ $(document).ready(() => {
     `;
     document.head.appendChild(style);
 
-    $("#chat .mes").each(function () { addCleanerButton($(this)); });
-    const chatObserver = new MutationObserver((mutations) => {
-        mutations.forEach((mutation) => {
-            $(mutation.addedNodes).each(function() {
-                if ($(this).hasClass('mes')) addCleanerButton($(this));
-            });
+    const chatElement = document.getElementById('chat');
+    if (chatElement) {
+        $(chatElement).find('.mes').each(function () { addCleanerButton($(this)); });
+        const chatObserver = new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+                for (const node of mutation.addedNodes) {
+                    if (node.nodeType !== Node.ELEMENT_NODE) continue;
+                    if (node.matches('.mes')) addCleanerButton($(node));
+                    node.querySelectorAll('.mes').forEach(mes => addCleanerButton($(mes)));
+                    if (node.matches('.extraMesButtons')) addCleanerButton($(node.closest('.mes')));
+                    node.querySelectorAll('.extraMesButtons').forEach(buttons => addCleanerButton($(buttons.closest('.mes'))));
+                }
+            }
         });
-    });
-    chatObserver.observe(document.getElementById('chat'), { childList: true, subtree: true });
+        chatObserver.observe(chatElement, { childList: true, subtree: true });
+    }
 
     // 화면 하단 고정 스크롤 네비 버튼
     const $nav = $(`
@@ -1462,8 +1523,18 @@ $(document).ready(() => {
         return bestId;
     }
 
-    // 현재 네비 기준 mesid (클릭할 때마다 직접 추적)
+    // 현재 네비 기준 DOM 인덱스
     let navCurrentId = null;
+    let programmaticScroll = false;
+    let navScrollTimer = null;
+
+    function scrollToMessage(chat, top, index) {
+        navCurrentId = index;
+        programmaticScroll = true;
+        chat.scrollTo({ top, behavior: 'smooth' });
+        clearTimeout(navScrollTimer);
+        navScrollTimer = setTimeout(() => { programmaticScroll = false; }, 800);
+    }
 
     // 모바일: 핸들 탭으로 토글
     let navExpanded = false;
@@ -1515,19 +1586,16 @@ $(document).ready(() => {
             if (alreadyAtTop) {
                 // 이미 상단 근처면 바로 이전 메시지로
                 const targetIndex = Math.max(0, visibleIndex - 1);
-                chat.scrollTo({ top: mesEls[targetIndex].offsetTop - 16, behavior: 'smooth' });
-                navCurrentId = targetIndex;
+                scrollToMessage(chat, mesEls[targetIndex].offsetTop - 16, targetIndex);
             } else {
                 // 현재 메시지 상단으로 먼저
-                chat.scrollTo({ top: targetTop, behavior: 'smooth' });
-                navCurrentId = visibleIndex;
+                scrollToMessage(chat, targetTop, visibleIndex);
             }
             return;
         }
 
         const targetIndex = Math.max(0, navCurrentId - 1);
-        chat.scrollTo({ top: mesEls[targetIndex].offsetTop - 16, behavior: 'smooth' });
-        navCurrentId = targetIndex;
+        scrollToMessage(chat, mesEls[targetIndex].offsetTop - 16, targetIndex);
     });
 
     $('#tc-scroll-down').on('click', () => {
@@ -1542,26 +1610,35 @@ $(document).ready(() => {
 
         const targetIndex = navCurrentId + 1;
         if (targetIndex < mesEls.length) {
-            chat.scrollTo({ top: mesEls[targetIndex].offsetTop - 16, behavior: 'smooth' });
-            navCurrentId = targetIndex;
+            scrollToMessage(chat, mesEls[targetIndex].offsetTop - 16, targetIndex);
         } else {
             // 마지막 메시지에서 한 번 더 → 완전 하단
-            chat.scrollTo({ top: chat.scrollHeight, behavior: 'smooth' });
+            scrollToMessage(chat, chat.scrollHeight, mesEls.length - 1);
         }
     });
 
     // 사용자가 직접 스크롤하면 navCurrentId 리셋 (자연스러운 재기준)
     $('#chat').on('scroll.tcnav', function() {
+        if (!programmaticScroll) navCurrentId = null;
+    });
+    $('#chat').on('wheel.tcnav touchstart.tcnav', () => {
+        programmaticScroll = false;
         navCurrentId = null;
     });
 
     // 채팅 전환 시 리셋
     eventSource.on(event_types.CHAT_CHANGED, () => {
         navCurrentId = null;
+        programmaticScroll = false;
+        clearTimeout(navScrollTimer);
         navExpanded = false;
         $('#tc-scroll-nav').removeClass('expanded');
         // 채팅 전환 후 새 #chat에 스크롤 리스너 재등록
         $('#chat').off('scroll.tcnav').on('scroll.tcnav', function() {
+            if (!programmaticScroll) navCurrentId = null;
+        });
+        $('#chat').off('wheel.tcnav touchstart.tcnav').on('wheel.tcnav touchstart.tcnav', () => {
+            programmaticScroll = false;
             navCurrentId = null;
         });
     });
@@ -1679,6 +1756,7 @@ async function updateTranslationByOriginalText(originalText, newTranslation) {
             } else {
                 // 현재 트랜잭션이 완전히 닫힌 뒤 새 트랜잭션으로 추가
                 transaction.oncomplete = () => {
+                    db.close();
                     addTranslationToDB(originalText, newTranslation).then(resolve).catch(reject);
                 };
             }
