@@ -50,6 +50,22 @@ function isMobile() {
     return window.innerWidth <= 768;
 }
 
+// fixed 좌표에는 문서 스크롤 위치가 아닌 visualViewport의 상대 좌표만 사용한다.
+function syncMobilePopupViewport() {
+    const popup = document.getElementById('tc-popup-window');
+    if (!popup || !isMobile()) return;
+    const viewport = window.visualViewport;
+    const bounds = {
+        top: viewport?.offsetTop ?? 0,
+        left: viewport?.offsetLeft ?? 0,
+        width: viewport?.width ?? window.innerWidth,
+        height: viewport?.height ?? window.innerHeight,
+    };
+    for (const [key, value] of Object.entries(bounds)) {
+        popup.style.setProperty(`--tc-mobile-${key}`, `${value}px`);
+    }
+}
+
 /**
  * 다중 규칙 처리 로직
  */
@@ -58,27 +74,110 @@ function processTextMulti(originalText, ranges, replacements) {
 
     ranges.forEach(r => {
         if (r.start && r.end) {
-            const escapedStart = r.start.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const escapedEnd = r.end.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const regex = new RegExp(`${escapedStart}[\\s\\S]*?${escapedEnd}`, 'g');
-            newText = newText.replace(regex, '');
+            let cursor = 0;
+            const kept = [];
+            while (true) {
+                const start = newText.indexOf(r.start, cursor);
+                if (start === -1) break;
+                const end = newText.indexOf(r.end, start + r.start.length);
+                if (end === -1) break;
+                kept.push(newText.slice(cursor, start));
+                cursor = end + r.end.length;
+            }
+            if (cursor) {
+                kept.push(newText.slice(cursor));
+                newText = kept.join('');
+            }
         } else if (!r.start && r.end) {
             // A가 비어있고 B만 있는 경우: 맨 처음부터 첫 번째 B(포함)까지 삭제
-            const escapedEnd = r.end.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const regex = new RegExp(`^[\\s\\S]*?${escapedEnd}`);
-            newText = newText.replace(regex, '');
+            const end = newText.indexOf(r.end);
+            if (end !== -1) newText = newText.slice(end + r.end.length);
         }
     });
 
     replacements.forEach(rep => {
         if (rep.find) {
-            const escapedFind = rep.find.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const regex = new RegExp(escapedFind, 'g');
-            newText = newText.replace(regex, rep.replace || '');
+            newText = newText.replaceAll(rep.find, rep.replace || '');
         }
     });
 
     return newText;
+}
+
+// TXT 순서: 기존 프롬프트 이름 → 토글 그룹 이름. 같은 ID·원문인 사본은 함께 갱신한다.
+function getPresetNameTargets(data) {
+    const prompts = Array.isArray(data) ? data : data?.prompts;
+    const groups = [];
+    const groupCopies = [];
+    const indexed = new Map();
+    function addGroups(items) {
+        if (!Array.isArray(items)) return;
+        for (const group of items) {
+            if (!group || typeof group.name !== 'string') continue;
+            const key = typeof group.id === 'string' && group.id
+                ? JSON.stringify([group.id, group.name]) : null;
+            if (key !== null && indexed.has(key)) {
+                groupCopies[indexed.get(key)].push(group);
+            } else {
+                if (key !== null) indexed.set(key, groups.length);
+                groups.push(group);
+                groupCopies.push([group]);
+            }
+        }
+    }
+    function visitExtensions(value) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+        for (const [key, child] of Object.entries(value)) {
+            if (key === 'entryGrouping') addGroups(child);
+            else if (key === 'presetPromptGroups') addGroups(child?.groups);
+            else visitExtensions(child);
+        }
+    }
+    // 확장 설정의 중첩 네임스페이스도 지원하되 프롬프트 본문·스크립트 문자열은 해석하지 않는다.
+    visitExtensions(data?.extensions);
+    for (const key of ['entryGrouping', 'presetPromptGroups']) {
+        if (Object.hasOwn(data || {}, key)) visitExtensions({ [key]: data[key] });
+    }
+    if (!Array.isArray(prompts) && groups.length === 0) {
+        throw new Error('프롬프트 또는 토글 그룹 구조를 찾을 수 없습니다.');
+    }
+    const promptTargets = Array.isArray(prompts) ? prompts : [];
+    if (promptTargets.some(prompt => !prompt || typeof prompt !== 'object' || Array.isArray(prompt))) {
+        throw new Error('프롬프트 항목 형식이 올바르지 않습니다.');
+    }
+    return { prompts: promptTargets, groups, groupCopies, all: [...promptTargets, ...groups] };
+}
+
+function exportPresetNames(data) {
+    return getPresetNameTargets(data).all.map(item => item.name || 'Unknown').join('\n');
+}
+
+function splitPresetNames(text) {
+    if (!text) return [];
+    const names = text.replace(/^\uFEFF/, '').split(/\r\n|\n|\r/);
+    // 편집기가 붙인 마지막 줄바꿈 하나는 이름으로 세지 않는다.
+    if (names[names.length - 1] === '') names.pop();
+    return names;
+}
+
+function importPresetNames(data, text) {
+    const { prompts, groups, groupCopies, all } = getPresetNameTargets(data);
+    const names = splitPresetNames(text);
+    const legacy = groups.length > 0 && prompts.length > 0 && names.length === prompts.length;
+    if (names.length !== all.length && !legacy) {
+        throw new Error(`이름 개수가 맞지 않습니다. 전체 ${all.length}개${groups.length && prompts.length ? ` 또는 기존 토글 전용 ${prompts.length}개` : ''}, 입력 ${names.length}개. 줄 순서와 개수를 확인하세요.`);
+    }
+    if (names.some(name => !name.trim())) {
+        throw new Error('빈 이름이 있습니다. 각 줄에 이름을 하나씩 입력하세요.');
+    }
+    const targets = legacy ? prompts : all;
+    targets.forEach((item, index) => { item.name = names[index]; });
+    if (!legacy) {
+        groupCopies.forEach((copies, index) => {
+            copies.forEach(group => { group.name = names[prompts.length + index]; });
+        });
+    }
+    return { prompts: prompts.length, groups: legacy ? 0 : groups.length };
 }
 
 function escapeHtml(text) {
@@ -221,12 +320,21 @@ function readStoredArray(key) {
     }
 }
 
-function saveToHistory(type, data) {
+function saveCurrentRulesToHistory() {
     const storageKey = getCurrentHistoryKey();
     let history = getHistory(storageKey);
-    history = history.filter(item => JSON.stringify(item.data) !== JSON.stringify(data));
-    history.unshift({ type, data });
-    if (history.length > 10) history.pop();
+    const { ranges, replacements } = collectCurrentRules();
+    const entries = [
+        ...ranges.filter(({ start, end }) => start && end).map(data => ({ type: 'range', data })),
+        ...replacements.map(data => ({ type: 'replace', data })),
+    ];
+    if (!entries.length) return;
+    for (const entry of entries) {
+        const key = JSON.stringify(entry.data);
+        history = history.filter(item => JSON.stringify(item.data) !== key);
+        history.unshift(entry);
+    }
+    history = history.slice(0, 10);
     localStorage.setItem(storageKey, JSON.stringify(history));
     renderHistoryTags();
 }
@@ -281,20 +389,25 @@ function renderPresetTags() {
 }
 
 function loadPreset(preset) {
-    $('#tc-range-container').empty();
-    $('#tc-replace-container').empty();
+    const $ranges = $('#tc-range-container').empty();
+    const $replacements = $('#tc-replace-container').empty();
+    const rangeFragment = document.createDocumentFragment();
+    const replaceFragment = document.createDocumentFragment();
 
     if (preset.ranges && preset.ranges.length > 0) {
-        preset.ranges.forEach(r => addRangeRow(r.start, r.end));
+        preset.ranges.forEach(r => addRangeRow(r.start, r.end, rangeFragment));
     } else {
-        addRangeRow();
+        addRangeRow('', '', rangeFragment);
     }
 
     if (preset.replacements && preset.replacements.length > 0) {
-        preset.replacements.forEach(r => addReplaceRow(r.find, r.replace));
+        preset.replacements.forEach(r => addReplaceRow(r.find, r.replace, replaceFragment));
     } else {
-        addReplaceRow();
+        addReplaceRow('', '', replaceFragment);
     }
+
+    $ranges.append(rangeFragment);
+    $replacements.append(replaceFragment);
 
     toastr.success(`프리셋 "${preset.name}"을 불러왔습니다.`);
 }
@@ -390,7 +503,7 @@ function applyTagToInput(type, data) {
     }
 }
 
-function addRangeRow(start = "", end = "") {
+function addRangeRow(start = "", end = "", target = null) {
     const $row = $(`
         <div class="tc-input-row tc-range-row">
             <input type="text" class="tc-start-tag" style="flex:1" placeholder="시작">
@@ -402,10 +515,11 @@ function addRangeRow(start = "", end = "") {
     $row.find('.tc-start-tag').val(start);
     $row.find('.tc-end-tag').val(end);
     $row.find('.tc-row-remove').on('click', () => $row.remove());
-    $('#tc-range-container').append($row);
+    if (target) target.appendChild($row[0]);
+    else $('#tc-range-container').append($row);
 }
 
-function addReplaceRow(find = "", replace = "") {
+function addReplaceRow(find = "", replace = "", target = null) {
     const $row = $(`
         <div class="tc-input-row tc-replace-row">
             <input type="text" class="tc-find-word" style="flex:1" placeholder="찾을 단어">
@@ -417,7 +531,8 @@ function addReplaceRow(find = "", replace = "") {
     $row.find('.tc-find-word').val(find);
     $row.find('.tc-replace-word').val(replace);
     $row.find('.tc-row-remove').on('click', () => $row.remove());
-    $('#tc-replace-container').append($row);
+    if (target) target.appendChild($row[0]);
+    else $('#tc-replace-container').append($row);
 }
 
 /**
@@ -573,8 +688,7 @@ function ensurePopupExists() {
                     <div class="tc-prompt-tool-groups">
                         <div class="tc-tool-group">
                             <span class="tc-tool-group-label">이름</span>
-                            <button id="tc-export-names-btn" class="tc-tool-btn" title="프롬프트 name 항목을 txt로 저장">📤 내보내기</button>
-                            <button id="tc-import-names-btn" class="tc-tool-btn" title="txt 파일로 name 항목 일괄 교체">📥 가져오기</button>
+                            <button id="tc-edit-names-btn" class="tc-tool-btn" title="이름을 복사하고 번역문을 붙여넣어 적용">📝 이름 편집</button>
                         </div>
                         <div class="tc-tool-group">
                             <span class="tc-tool-group-label">이미지링크</span>
@@ -585,6 +699,7 @@ function ensurePopupExists() {
                     <input type="file" id="tc-json-file-input" style="display:none;" accept=".json">
                     <input type="file" id="tc-names-file-input" style="display:none;" accept=".txt">
                 </div>
+                <div class="tc-prompt-names-help">이름 편집에서 원본을 복사하고 번역 결과를 붙여넣으세요. TXT 저장·불러오기도 가능합니다.</div>
                 <textarea id="tc-prompt-json-view" class="tc-text-area" style="flex:1; font-family:monospace; font-size:12px; height:100%; white-space: pre;" placeholder="[📂 JSON 불러오기] 버튼을 눌러 파일을 선택하세요."></textarea>
             </div>
         </div>
@@ -600,6 +715,37 @@ function ensurePopupExists() {
             </div>
         </div>
         <div id="tc-resize-handle" class="tc-resizer"></div>
+
+        <div id="tc-names-overlay" style="display:none;">
+            <div id="tc-names-dialog" role="dialog" aria-modal="true" aria-labelledby="tc-names-title">
+                <div class="tc-names-header">
+                    <div><span class="tc-names-eyebrow">프리셋 편집</span><h2 id="tc-names-title">토글·그룹 이름 번역</h2><p class="tc-names-help">복사하고, 번역하고, 비교한 뒤 적용하세요.</p></div>
+                    <button id="tc-names-close" class="tc-tool-btn" aria-label="이름 편집 닫기">✕</button>
+                </div>
+                <div class="tc-names-body">
+                <div class="tc-names-columns">
+                    <section class="tc-names-column tc-names-source">
+                        <div class="tc-names-card-heading"><span class="tc-names-step">1</span><label for="tc-names-original">원본 이름</label><span id="tc-names-original-count" class="tc-names-count"></span></div>
+                        <p class="tc-names-card-help">전체 복사 후 원하는 번역기에 붙여넣으세요.</p>
+                        <textarea id="tc-names-original" readonly spellcheck="false"></textarea>
+                        <div class="tc-names-actions"><button id="tc-names-copy" class="tc-tool-btn tc-names-copy">원본 전체 복사</button><button id="tc-export-names-btn" class="tc-tool-btn tc-names-file">TXT 다운로드</button></div>
+                    </section>
+                    <section class="tc-names-column tc-names-result">
+                        <div class="tc-names-card-heading"><span class="tc-names-step">2</span><label for="tc-names-translated">번역 결과</label><span id="tc-names-translated-count" class="tc-names-count"></span></div>
+                        <p class="tc-names-card-help">토글 → 그룹 순서 · 한 줄에 이름 하나 · 순서 유지</p>
+                        <textarea id="tc-names-translated" spellcheck="false" placeholder="번역한 이름 목록을 여기에 붙여넣으세요."></textarea>
+                        <div class="tc-names-actions"><span class="tc-names-paste-hint">직접 붙여넣거나</span><button id="tc-import-names-btn" class="tc-tool-btn tc-names-file">TXT 불러오기</button></div>
+                    </section>
+                </div>
+                <div id="tc-names-validation" class="tc-names-validation is-empty" role="status" aria-live="polite"><strong id="tc-names-status-title">번역 대기</strong><span id="tc-names-status"></span></div>
+                <section class="tc-names-review">
+                    <div class="tc-names-review-heading"><div class="tc-names-card-heading"><span class="tc-names-step">3</span><h3>적용 전 대조</h3></div><span>같은 줄의 원본과 번역을 확인하세요</span></div>
+                    <div class="tc-names-preview" tabindex="0" aria-label="원본과 번역 줄별 대조"><table><thead><tr><th>항목</th><th>원본 이름</th><th>번역 이름</th></tr></thead><tbody id="tc-names-preview-body"></tbody></table></div>
+                </section>
+                </div>
+                <div class="tc-names-footer"><div><strong>이름만 변경됩니다</strong><span>적용 후 JSON을 다운로드해 저장하세요.</span></div><button id="tc-names-apply" class="tc-footer-btn tc-btn-apply" disabled>번역 이름 적용</button></div>
+            </div>
+        </div>
 
         <!-- 이미지링크 가져오기 확인창 -->
         <div id="tc-image-confirm-overlay">
@@ -640,6 +786,9 @@ function ensurePopupExists() {
 
     setupDraggable($('#tc-popup-window'), $('#tc-drag-handle'));
     setupResizable($('#tc-popup-window'), $('#tc-resize-handle'));
+    window.addEventListener('resize', syncMobilePopupViewport);
+    window.visualViewport?.addEventListener('resize', syncMobilePopupViewport);
+    window.visualViewport?.addEventListener('scroll', syncMobilePopupViewport);
 
     $('.tc-theme-dot').on('click', function() {
         applyTheme($(this).attr('data-theme'));
@@ -772,6 +921,7 @@ function ensurePopupExists() {
     });
 	
     $('#tc-close-x, #tc-cancel-btn').on('click', () => {
+        if (isApplying) return;
         $('#tc-popup-window').hide();
         $('#tc-prompt-json-view').val('');
         loadedFileName = "preset.json";   
@@ -853,8 +1003,13 @@ function ensurePopupExists() {
             }
             try {
                 JSON.parse(jsonStr); 
-                downloadTextFile(jsonStr, loadedFileName); 
-                toastr.success(`'${loadedFileName}' 다운로드 완료.`);
+                const requestedName = prompt(`저장할 프리셋 파일명을 입력하세요.\n비워 두거나 취소하면 기존 이름(${loadedFileName})으로 저장합니다.`, '');
+                const customName = requestedName?.trim();
+                const filename = customName
+                    ? (/\.json$/i.test(customName) ? customName : `${customName}.json`)
+                    : loadedFileName;
+                downloadTextFile(jsonStr, filename);
+                toastr.success(`'${filename}' 다운로드 완료.`);
             } catch (e) {
                 toastr.error("JSON 형식이 올바르지 않아 다운로드할 수 없습니다.");
             }
@@ -865,6 +1020,7 @@ function ensurePopupExists() {
             toastr.error("메시지가 선택되지 않았습니다.");
             return;
         }
+        const mesId = currentMesId;
 
         const $applyButton = $('#tc-apply-btn');
         const originalLabel = $applyButton.text();
@@ -885,22 +1041,18 @@ function ensurePopupExists() {
         });
         try {
 
-        // 히스토리 저장
-        $('.tc-range-row').each(function() {
-            const s = $(this).find('.tc-start-tag').val();
-            const e = $(this).find('.tc-end-tag').val();
-            if (s && e) saveToHistory('range', { start: s, end: e });
-        });
-        $('.tc-replace-row').each(function() {
-            const f = $(this).find('.tc-find-word').val();
-            const r = $(this).find('.tc-replace-word').val();
-            if (f) saveToHistory('replace', { find: f, replace: r });
-        });
+        saveCurrentRulesToHistory();
 
         const finalContent = $('#tc-modified-view').val();
         const context = getContext();
-        const message = context.chat[currentMesId];
+        const message = context.chat[mesId];
         if (!message) throw new Error('선택한 메시지를 찾을 수 없습니다.');
+
+        if (activeMode === 'original' && message.mes === finalContent) {
+            $('#tc-popup-window').hide();
+            toastr.info('변경된 내용이 없습니다.');
+            return;
+        }
 
         // LLM 번역 관리 저장
         if (activeMode === 'llm_manual') {
@@ -931,13 +1083,13 @@ function ensurePopupExists() {
             message.mes = finalContent;
         }
         
-        updateMessageBlock(currentMesId, message);
+        updateMessageBlock(mesId, message);
         await saveChatConditional();
         $('#tc-popup-window').hide();
         $('#tc-prompt-json-view').val('');
         loadedFileName = "preset.json";
-        toastr.success(activeMode === 'llm_manual' ? '번역이 저장되었습니다.' : '메시지가 저장되었습니다.');
-        const savedMesId = currentMesId;
+        toastr.success(activeMode === 'llm_manual' ? '번역을 반영했습니다.' : '메시지를 반영했습니다.');
+        const savedMesId = mesId;
         setTimeout(async () => {
             try {
                 await eventSource.emit(event_types.MESSAGE_UPDATED, savedMesId);
@@ -968,22 +1120,17 @@ function ensurePopupExists() {
         }
 
         if (currentMesId === null) return;
-
-        // 히스토리 저장
-        $('.tc-range-row').each(function() {
-            const s = $(this).find('.tc-start-tag').val();
-            const e = $(this).find('.tc-end-tag').val();
-            if (s && e) saveToHistory('range', { start: s, end: e });
-        });
-        $('.tc-replace-row').each(function() {
-            const f = $(this).find('.tc-find-word').val();
-            const r = $(this).find('.tc-replace-word').val();
-            if (f) saveToHistory('replace', { find: f, replace: r });
-        });
+        const mesId = currentMesId;
+        isApplying = true;
+        const $switchButton = $('#tc-apply-switch-btn').prop('disabled', true);
+        $('#tc-apply-btn').prop('disabled', true);
+        try {
+        saveCurrentRulesToHistory();
 
         const finalContent = $('#tc-modified-view').val();
         const context = getContext();
-        const message = context.chat[currentMesId];
+        const message = context.chat[mesId];
+        if (!message) throw new Error('선택한 메시지를 찾을 수 없습니다.');
 
         if (activeMode === 'llm_manual') {
             if (!finalContent.trim()) {
@@ -995,10 +1142,8 @@ function ensurePopupExists() {
                 const existing = await getTranslationFromDB(originalText);
                 if (existing) {
                     await updateTranslationByOriginalText(originalText, finalContent);
-                    toastr.success("DB 데이터가 업데이트되었습니다.");
                 } else {
                     await addTranslationToDB(originalText, finalContent);
-                    toastr.success("DB에 번역이 등록되었습니다.");
                 }
                 if (!message.extra) message.extra = {};
                 message.extra.display_text = finalContent;
@@ -1008,17 +1153,24 @@ function ensurePopupExists() {
             }
         } else {
             message.mes = finalContent;
-            toastr.success("원본 메시지가 수정되었습니다.");
         }
 
-        updateMessageBlock(currentMesId, message);
+        updateMessageBlock(mesId, message);
         await saveChatConditional();
-        await eventSource.emit(event_types.MESSAGE_UPDATED, currentMesId);
-        await eventSource.emit(event_types.MESSAGE_RENDERED, currentMesId);
+        await eventSource.emit(event_types.MESSAGE_UPDATED, mesId);
+        await eventSource.emit(event_types.MESSAGE_RENDERED, mesId);
 
         // 창 유지 + 반대 탭으로 전환
         const nextMode = activeMode === 'llm_manual' ? 'original' : 'llm_manual';
         $(`.tc-tab[data-mode="${nextMode}"]`).trigger('click');
+        } catch (error) {
+            console.error('[TextCleaner] 저장 후 탭 전환 실패', error);
+            toastr.error(`적용 실패: ${error.message}`);
+        } finally {
+            isApplying = false;
+            $switchButton.prop('disabled', false);
+            $('#tc-apply-btn').prop('disabled', false);
+        }
     });
     
     $('#tc-import-json-btn').on('click', () => $('#tc-json-file-input').click());
@@ -1039,15 +1191,106 @@ function ensurePopupExists() {
         reader.readAsText(file);
         $(this).val(''); 
     });
-    $('#tc-export-names-btn').on('click', () => {
+    let namesSource = null;
+    function fitNamesDialog() {
+        const overlay = document.getElementById('tc-names-overlay');
+        if (overlay.style.display === 'none') return;
+        const viewport = window.visualViewport;
+        const bottom = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
+        const rect = overlay.getBoundingClientRect();
+        document.getElementById('tc-names-dialog').style.maxHeight = `${Math.max(0, Math.min(rect.height - 24, bottom - rect.top - 24))}px`;
+    }
+    window.addEventListener('resize', fitNamesDialog);
+    window.visualViewport?.addEventListener('resize', fitNamesDialog);
+    window.visualViewport?.addEventListener('scroll', fitNamesDialog);
+    function updateNamesPreview() {
+        const data = JSON.parse(namesSource);
+        const { prompts, all } = getPresetNameTargets(data);
+        const text = $('#tc-names-translated').val();
+        const names = splitPresetNames(text);
+        $('#tc-names-translated-count').text(`(${names.length}줄 / ${all.length}개)`);
+        let valid = false;
+        let state = text ? 'error' : 'empty';
+        let statusTitle = text ? '입력 확인 필요' : '번역 대기';
+        try {
+            const result = importPresetNames(JSON.parse(namesSource), text);
+            $('#tc-names-status').text(result.groups === 0 && all.length > prompts.length
+                ? '토글 전용 입력입니다. 그룹 이름은 유지됩니다.'
+                : '개수가 일치합니다. 아래에서 줄별 대응을 확인한 뒤 적용하세요.');
+            valid = true;
+            state = 'ready';
+            statusTitle = '적용 준비 완료';
+        } catch (error) {
+            $('#tc-names-status').text(text ? error.message : `번역할 이름 ${all.length}개 (토글 ${prompts.length}개, 그룹 ${all.length - prompts.length}개)`);
+        }
+        $('#tc-names-validation').prop('className', `tc-names-validation is-${state}`);
+        $('#tc-names-status-title').text(statusTitle);
+        $('#tc-names-apply').prop('disabled', !valid);
+        const fragment = document.createDocumentFragment();
+        all.forEach((item, i) => {
+            const $row = $('<tr>');
+            const $meta = $('<td>');
+            $meta.append($('<span>').prop('className', 'tc-names-row-number').text(`${i + 1}`));
+            $meta.append($('<span>').prop('className', `tc-names-kind ${i < prompts.length ? 'is-toggle' : 'is-group'}`).text(i < prompts.length ? '토글' : '그룹'));
+            $row.append($meta);
+            $row.append($('<td>').text(item.name || 'Unknown'));
+            const legacyGroup = names.length > 0 && names.length === prompts.length && i >= prompts.length;
+            $row.append($('<td>').prop('className', names[i]?.trim() || legacyGroup ? 'tc-names-value' : 'tc-names-missing').text(legacyGroup ? '(그룹 유지)' : (names[i] || '번역 대기')));
+            fragment.appendChild($row[0]);
+        });
+        $('#tc-names-preview-body').empty().append(fragment);
+    }
+    function closeNamesDialog() {
+        $('#tc-names-overlay').hide();
+        $('#tc-edit-names-btn').trigger('focus');
+    }
+    $('#tc-edit-names-btn').on('click', () => {
         try {
             const jsonStr = $('#tc-prompt-json-view').val();
             if (!jsonStr) return toastr.warning("JSON이 비어있습니다.");
             const data = JSON.parse(jsonStr);
-            let promptsArray = Array.isArray(data) ? data : (data.prompts || []);
-            const names = promptsArray.map(p => p.name || "Unknown").join('\n');
-            downloadTextFile(names, 'prompt_names.txt');
+            const names = exportPresetNames(data);
+            if (namesSource !== jsonStr) $('#tc-names-translated').val('');
+            namesSource = jsonStr;
+            $('#tc-names-original').val(names);
+            $('#tc-names-original-count').text(`(${getPresetNameTargets(data).all.length}개)`);
+            updateNamesPreview();
+            $('#tc-names-overlay').css('display', 'flex');
+            fitNamesDialog();
+            $('#tc-names-copy').trigger('focus');
         } catch (e) { toastr.error("오류: " + e.message); }
+    });
+    $('#tc-names-translated').on('input', updateNamesPreview);
+    $('#tc-names-close').on('click', closeNamesDialog);
+    $('#tc-names-overlay').on('keydown', function(e) {
+        e.stopPropagation();
+        if (e.key === 'Escape') { e.preventDefault(); closeNamesDialog(); }
+        if (e.key === 'Tab') {
+            const items = $(this).find('button:not(:disabled), textarea, [tabindex="0"]').get();
+            const first = items[0], last = items[items.length - 1];
+            if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+            else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+        }
+    });
+    $('#tc-names-copy').on('click', async () => {
+        try {
+            await navigator.clipboard.writeText($('#tc-names-original').val());
+            toastr.success('원본 이름을 복사했습니다.');
+        } catch {
+            $('#tc-names-original').trigger('focus')[0].select();
+            toastr.info('원본을 선택했습니다. 복사 메뉴 또는 Ctrl+C로 복사하세요.');
+        }
+    });
+    $('#tc-export-names-btn').on('click', () => downloadTextFile($('#tc-names-original').val(), 'prompt_names.txt'));
+    $('#tc-names-apply').on('click', () => {
+        try {
+            if ($('#tc-prompt-json-view').val() !== namesSource) throw new Error('JSON이 변경되었습니다. 이름 편집을 다시 열어주세요.');
+            const data = JSON.parse(namesSource);
+            const updated = importPresetNames(data, $('#tc-names-translated').val());
+            $('#tc-prompt-json-view').val(JSON.stringify(data, null, 4));
+            closeNamesDialog();
+            toastr.success(`이름 업데이트 완료 (토글 ${updated.prompts}개, 그룹 ${updated.groups}개). JSON을 다운로드해 저장하세요.`);
+        } catch (error) { toastr.error(error.message); }
     });
     $('#tc-export-images-btn').on('click', () => {
         try {
@@ -1172,15 +1415,9 @@ function ensurePopupExists() {
         if (!file) return;
         const reader = new FileReader();
         reader.onload = function(e) {
-            const newNames = e.target.result.split(/\r?\n/);
             try {
-                const jsonStr = $('#tc-prompt-json-view').val();
-                let data = JSON.parse(jsonStr);
-                let promptsArray = Array.isArray(data) ? data : (data.prompts || null);
-                if (!promptsArray) return toastr.error("프롬프트 구조 아님");
-                promptsArray.forEach((p, i) => { if (i < newNames.length) p.name = newNames[i]; });
-                $('#tc-prompt-json-view').val(JSON.stringify(data, null, 4));
-                toastr.success("이름 업데이트 완료");
+                $('#tc-names-translated').val(e.target.result);
+                updateNamesPreview();
             } catch (err) { toastr.error("오류: " + err.message); }
         };
         reader.readAsText(file);
@@ -1188,18 +1425,7 @@ function ensurePopupExists() {
     });
 
 $('#tc-process-btn').on('click', () => {
-        const ranges = [];
-        $('.tc-range-row').each(function() {
-            const start = $(this).find('.tc-start-tag').val();
-            const end = $(this).find('.tc-end-tag').val();
-            if (start || end) ranges.push({ start, end });
-        });
-        const replacements = [];
-        $('.tc-replace-row').each(function() {
-            const find = $(this).find('.tc-find-word').val();
-            const replace = $(this).find('.tc-replace-word').val();
-            if (find) replacements.push({ find, replace });
-        });
+        const { ranges, replacements } = collectCurrentRules();
 
         // [수정됨] 누적 적용을 위해 source를 original-view가 아닌 modified-view(현재 결과물)로 변경
         const currentContent = $('#tc-modified-view').val();
@@ -1324,6 +1550,7 @@ function setupResizable($popup, $handle) {
     window.addEventListener('mouseup', onMouseUp);
 }
 async function openCleanerPopup(mesId) {
+    if (isApplying) return;
     ensurePopupExists();
     isCompareMode = false;
     
@@ -1386,21 +1613,8 @@ async function openCleanerPopup(mesId) {
     
     
     if (isMobile()) {
-        const $chat = $('#chat');
-        if ($chat.length > 0) {
-            const rect = $chat[0].getBoundingClientRect();
-            $popup.css({
-                display: 'flex',
-                top: rect.top + 'px',
-                height: rect.height + 'px',
-                left: '50%',
-                width: '98%',
-                transform: 'translateX(-50%)',
-                margin: '0',
-                position: 'fixed',
-                'padding-bottom': 'env(safe-area-inset-bottom)'
-            });
-        }
+        syncMobilePopupViewport();
+        $popup.css('display', 'flex');
         $('#tc-resize-handle').hide();
     } else {
         const savedDim = localStorage.getItem(DIMENSIONS_KEY);
